@@ -1,0 +1,614 @@
+{
+  "name": "🗓️ Appointment Reminder & Reschedule System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment-scheduled",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "appointment-trigger",
+      "name": "Appointment Scheduled",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "webhookId": "appointment-scheduled",
+      "notes": "Triggered when appointment is booked via Calendly, GoHighLevel, or manual entry"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"message\": \"Appointment confirmed - reminders activated\", \"appointmentId\": $json.appointmentId } }}"
+      },
+      "id": "webhook-response",
+      "name": "Confirm Receipt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [450, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and standardize appointment data\nconst data = $input.first().json;\n\n// Handle different date formats\nlet appointmentDate;\nif (data.body?.appointmentDate) {\n  appointmentDate = new Date(data.body.appointmentDate);\n} else if (data.body?.scheduled_event?.start_time) {\n  appointmentDate = new Date(data.body.scheduled_event.start_time);\n} else {\n  throw new Error('No appointment date provided');\n}\n\nconst now = new Date();\nconst hoursUntilAppointment = (appointmentDate - now) / (1000 * 60 * 60);\n\nreturn {\n  json: {\n    appointmentId: data.body.appointmentId || data.body.event_id || `APT-${Date.now()}`,\n    leadId: data.body.leadId || data.body.invitee_uuid,\n    firstName: data.body.firstName || data.body.name?.split(' ')[0] || '',\n    lastName: data.body.lastName || data.body.name?.split(' ').slice(1).join(' ') || '',\n    email: data.body.email || '',\n    phone: data.body.phone || data.body.phoneNumber || '',\n    appointmentDate: appointmentDate.toISOString(),\n    appointmentTime: appointmentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }),\n    appointmentDay: appointmentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),\n    agentName: data.body.agentName || 'Your Insurance Agent',\n    agentEmail: data.body.agentEmail || 'agent@youragency.com',\n    agentPhone: data.body.agentPhone || '(123) 456-7890',\n    insuranceType: data.body.insuranceType || 'insurance',\n    meetingType: data.body.meetingType || 'phone_call',\n    meetingLink: data.body.meetingLink || '',\n    timezone: data.body.timezone || 'America/New_York',\n    hoursUntilAppointment: Math.round(hoursUntilAppointment * 10) / 10,\n    scheduledAt: now.toISOString(),\n    status: 'scheduled',\n    remindersSent: []\n  }\n};"
+      },
+      "id": "parse-appointment",
+      "name": "Parse Appointment Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 400],
+      "notes": "Standardizes data from different calendar sources"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "sendTo": "={{ $json.email }}",
+        "subject": "✅ Appointment Confirmed with {{ $json.agentName }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }\n    .container { max-width: 600px; margin: 0 auto; background: white; }\n    .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 40px 30px; text-align: center; }\n    .checkmark { font-size: 60px; margin-bottom: 10px; }\n    .content { padding: 40px 30px; }\n    .appointment-box { background: #f8f9fa; padding: 25px; border-left: 4px solid #28a745; margin: 20px 0; border-radius: 5px; }\n    .detail-row { margin: 12px 0; padding: 10px 0; border-bottom: 1px solid #e9ecef; }\n    .label { font-weight: bold; color: #667eea; display: inline-block; width: 140px; }\n    .value { color: #333; }\n    .add-calendar { background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n    .reschedule { color: #dc3545; text-decoration: none; }\n    .prep-box { background: #fff3cd; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <div class=\"checkmark\">✅</div>\n      <h1>You're All Set!</h1>\n      <p>Your appointment is confirmed</p>\n    </div>\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }}!</h2>\n      \n      <p>Great news! Your {{ $json.insuranceType }} consultation is confirmed.</p>\n      \n      <div class=\"appointment-box\">\n        <h3 style=\"margin-top: 0; color: #28a745;\">📅 Appointment Details</h3>\n        <div class=\"detail-row\">\n          <span class=\"label\">Date:</span>\n          <span class=\"value\">{{ $json.appointmentDay }}</span>\n        </div>\n        <div class=\"detail-row\">\n          <span class=\"label\">Time:</span>\n          <span class=\"value\">{{ $json.appointmentTime }} ({{ $json.timezone }})</span>\n        </div>\n        <div class=\"detail-row\">\n          <span class=\"label\">With:</span>\n          <span class=\"value\">{{ $json.agentName }}</span>\n        </div>\n        <div class=\"detail-row\">\n          <span class=\"label\">Type:</span>\n          <span class=\"value\">{{ $json.meetingType === 'phone_call' ? 'Phone Call' : $json.meetingType === 'video' ? 'Video Conference' : 'In-Person Meeting' }}</span>\n        </div>\n        {{ $json.meetingType === 'phone_call' ? `\n        <div class=\"detail-row\">\n          <span class=\"label\">We'll call you at:</span>\n          <span class=\"value\">${$json.phone}</span>\n        </div>\n        ` : '' }}\n        {{ $json.meetingLink ? `\n        <div class=\"detail-row\">\n          <span class=\"label\">Meeting Link:</span>\n          <span class=\"value\"><a href=\"${$json.meetingLink}\">${$json.meetingLink}</a></span>\n        </div>\n        ` : '' }}\n      </div>\n      \n      <a href=\"https://calendar.google.com/calendar/render?action=TEMPLATE&text=Insurance+Consultation+with+{{ $json.agentName }}&dates={{ $json.appointmentDate.replace(/[-:]/g, '').replace(/\\.\\d{3}Z/, 'Z') }}&details=Consultation+about+{{ $json.insuranceType }}&location={{ $json.meetingLink || $json.agentPhone }}\" class=\"add-calendar\">📅 Add to Google Calendar</a>\n      \n      <div class=\"prep-box\">\n        <h4 style=\"margin-top: 0;\">🎯 How to Prepare:</h4>\n        <ul>\n          <li>Have your current insurance information handy (if applicable)</li>\n          <li>Know your budget and coverage goals</li>\n          <li>Prepare any questions you have about coverage options</li>\n          <li>Have a pen and paper ready to take notes</li>\n        </ul>\n      </div>\n      \n      <h3>What to Expect:</h3>\n      <p>During our 15-20 minute consultation, we'll:</p>\n      <ol>\n        <li>Review your current situation and coverage needs</li>\n        <li>Compare quotes from 20+ top-rated carriers</li>\n        <li>Explain your options in plain English (no confusing jargon!)</li>\n        <li>Answer all your questions</li>\n        <li>Help you choose the best coverage at the best price</li>\n      </ol>\n      \n      <p><strong>Need to reschedule?</strong> <a href=\"https://youragency.com/reschedule/{{ $json.appointmentId }}\" class=\"reschedule\">Click here to pick a new time</a></p>\n      \n      <p>Looking forward to speaking with you!</p>\n      \n      <p>Best regards,<br>\n      <strong>{{ $json.agentName }}</strong><br>\n      {{ $json.agentPhone }}<br>\n      {{ $json.agentEmail }}</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "immediate-confirmation",
+      "name": "Send Immediate Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [850, 300],
+      "notes": "Sent immediately after booking"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! ✅ Your {{ $json.insuranceType }} consultation is confirmed for {{ $json.appointmentDay }} at {{ $json.appointmentTime }}. We'll call you at this number. Need to reschedule? Reply CHANGE. - {{ $json.agentName }}",
+        "options": {}
+      },
+      "id": "immediate-sms",
+      "name": "Send Confirmation SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [850, 450],
+      "notes": "Immediate SMS confirmation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "check-timing",
+              "leftValue": "={{ $json.hoursUntilAppointment }}",
+              "rightValue": 24,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-24h-needed",
+      "name": "Should Send 24h Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 400],
+      "notes": "Only send 24h reminder if appointment is >24h away"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "={{ $json.appointmentDate }}"
+            }
+          ]
+        },
+        "amount": 24,
+        "unit": "hours"
+      },
+      "id": "wait-24h-before",
+      "name": "Wait Until 24h Before",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1.2,
+      "position": [1250, 300],
+      "notes": "Triggers 24 hours before appointment"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "sendTo": "={{ $json.email }}",
+        "subject": "⏰ Reminder: Your Appointment Tomorrow with {{ $json.agentName }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 30px; }\n    .header { background: #667eea; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }\n    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }\n    .reminder-box { background: white; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; }\n    .confirm-btn { background: #28a745; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 10px; font-weight: bold; }\n    .reschedule-btn { background: #dc3545; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 10px; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>⏰ Appointment Reminder</h1>\n    </div>\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }}!</h2>\n      \n      <p>Just a friendly reminder that you have an appointment <strong>tomorrow</strong>.</p>\n      \n      <div class=\"reminder-box\">\n        <h3 style=\"margin-top: 0;\">📅 Tomorrow's Appointment</h3>\n        <p><strong>Date:</strong> {{ $json.appointmentDay }}</p>\n        <p><strong>Time:</strong> {{ $json.appointmentTime }} ({{ $json.timezone }})</p>\n        <p><strong>With:</strong> {{ $json.agentName }}</p>\n        <p><strong>Topic:</strong> {{ $json.insuranceType }} consultation</p>\n        {{ $json.meetingType === 'phone_call' ? `<p><strong>We'll call:</strong> ${$json.phone}</p>` : '' }}\n        {{ $json.meetingLink ? `<p><strong>Join here:</strong> <a href=\"${$json.meetingLink}\">Click to join meeting</a></p>` : '' }}\n      </div>\n      \n      <p><strong>We're looking forward to helping you find the best {{ $json.insuranceType }} coverage!</strong></p>\n      \n      <div style=\"text-align: center;\">\n        <a href=\"https://youragency.com/confirm/{{ $json.appointmentId }}\" class=\"confirm-btn\">✅ Confirm Appointment</a>\n        <a href=\"https://youragency.com/reschedule/{{ $json.appointmentId }}\" class=\"reschedule-btn\">📅 Reschedule</a>\n      </div>\n      \n      <p style=\"font-size: 12px; color: #666; margin-top: 30px;\">Can't make it? Please let us know ASAP so we can help someone else.</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "reminder-24h-email",
+      "name": "24h Reminder Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1450, 200],
+      "notes": "Email reminder 24 hours before"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Reminder: Tomorrow at {{ $json.appointmentTime }} you have a {{ $json.insuranceType }} consultation with {{ $json.agentName }}. We'll call {{ $json.phone }}. Still good? Reply YES to confirm or CHANGE to reschedule.",
+        "options": {}
+      },
+      "id": "reminder-24h-sms",
+      "name": "24h Reminder SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1450, 350],
+      "notes": "SMS reminder 24 hours before"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        },
+        "amount": 2,
+        "unit": "hours"
+      },
+      "id": "wait-2h-before",
+      "name": "Wait Until 2h Before",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1.2,
+      "position": [1650, 350],
+      "notes": "Triggers 2 hours before appointment"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! Your appointment with {{ $json.agentName }} is in 2 HOURS ({{ $json.appointmentTime }}). {{ $json.meetingType === 'phone_call' ? `We'll call you at this number.` : `Meeting link: ${$json.meetingLink}` }} See you soon! 😊",
+        "options": {}
+      },
+      "id": "reminder-2h-sms",
+      "name": "2h Reminder SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1850, 350],
+      "notes": "Final reminder 2 hours before"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        },
+        "amount": 30,
+        "unit": "minutes"
+      },
+      "id": "wait-30min-before",
+      "name": "Wait Until 30min Before",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1.2,
+      "position": [2050, 350],
+      "notes": "Optional: 30 min before reminder"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "={{ $json.firstName }}, your appointment is in 30 MINUTES! {{ $json.meetingLink ? `Join here: ${$json.meetingLink}` : `We'll call you at ${$json.appointmentTime}.` }} Have your questions ready! 📋",
+        "options": {}
+      },
+      "id": "reminder-30min-sms",
+      "name": "30min Final Reminder (Optional)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [2250, 350],
+      "notes": "Last reminder - optional"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblAppointments",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Appointment ID": "={{ $json.appointmentId }}",
+            "Status": "Scheduled",
+            "Confirmation Sent": true,
+            "24h Reminder Sent": "={{ $json.remindersSent.includes('24h') }}",
+            "2h Reminder Sent": "={{ $json.remindersSent.includes('2h') }}",
+            "30min Reminder Sent": "={{ $json.remindersSent.includes('30min') }}",
+            "Last Updated": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "update-appointment-status",
+      "name": "Update Appointment Status",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [850, 600],
+      "notes": "Tracks reminder status in CRM"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment-response",
+        "options": {}
+      },
+      "id": "response-webhook",
+      "name": "Response Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 800],
+      "webhookId": "appointment-response",
+      "notes": "Handles confirmations, cancellations, reschedules"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process appointment responses\nconst response = $input.first().json;\nconst action = response.body.action; // 'confirm', 'cancel', 'reschedule'\nconst appointmentId = response.body.appointmentId;\n\nlet status, message, nextAction;\n\nswitch(action) {\n  case 'confirm':\n  case 'YES':\n    status = 'confirmed';\n    message = 'Thank you for confirming! We\\'re looking forward to speaking with you.';\n    nextAction = 'proceed_as_scheduled';\n    break;\n    \n  case 'cancel':\n  case 'CANCEL':\n    status = 'cancelled';\n    message = 'Your appointment has been cancelled. If you\\'d like to reschedule, visit: https://youragency.com/schedule';\n    nextAction = 'notify_agent_cancellation';\n    break;\n    \n  case 'reschedule':\n  case 'CHANGE':\n    status = 'needs_reschedule';\n    message = 'No problem! Click here to pick a new time: https://youragency.com/reschedule/' + appointmentId;\n    nextAction = 'send_reschedule_link';\n    break;\n    \n  default:\n    status = 'unknown_response';\n    message = 'We didn\\'t understand that. Reply YES to confirm, CHANGE to reschedule, or CANCEL to cancel.';\n    nextAction = 'request_clarification';\n}\n\nreturn {\n  json: {\n    appointmentId: appointmentId,\n    action: action,\n    status: status,\n    message: message,\n    nextAction: nextAction,\n    respondedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "process-response",
+      "name": "Process Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 800],
+      "notes": "Handles confirm/cancel/reschedule actions"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "check-cancelled",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "cancelled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-response",
+      "name": "Route Response",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [650, 800]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblAppointments",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Cancelled",
+            "Cancelled At": "={{ $json.respondedAt }}",
+            "Cancellation Reason": "Client requested"
+          }
+        }
+      },
+      "id": "mark-cancelled",
+      "name": "Mark Cancelled in CRM",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [850, 800],
+      "notes": "Updates CRM when cancelled"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "admin@youragency.com",
+          "mode": "list"
+        },
+        "subject": "❌ Appointment Cancelled - {{ $json.firstName }} {{ $json.lastName }}",
+        "message": "=The appointment with {{ $json.firstName }} {{ $json.lastName }} scheduled for {{ $json.appointmentDay }} at {{ $json.appointmentTime }} has been cancelled.\n\nAppointment ID: {{ $json.appointmentId }}\nPhone: {{ $json.phone }}\nEmail: {{ $json.email }}\n\nConsider following up to reschedule.",
+        "options": {}
+      },
+      "id": "notify-cancellation",
+      "name": "Notify Agent of Cancellation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1050, 800],
+      "notes": "Alerts agent when appointment cancelled"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment-completed",
+        "options": {}
+      },
+      "id": "completion-webhook",
+      "name": "Appointment Completed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 1050],
+      "webhookId": "appointment-completed",
+      "notes": "Triggered after appointment is finished"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! Thanks for taking time to speak with {{ $json.agentName }} today. How did everything go? Reply with any questions or let us know if you need anything! 😊",
+        "options": {}
+      },
+      "id": "followup-sms",
+      "name": "Post-Appointment Follow-up",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [450, 1050],
+      "notes": "Sends follow-up after appointment"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblAppointments",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Completed",
+            "Completed At": "={{ $now.toISO() }}",
+            "No-Show": false,
+            "Follow-up Sent": true
+          }
+        }
+      },
+      "id": "mark-completed",
+      "name": "Mark Appointment Complete",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [650, 1050],
+      "notes": "Updates appointment as completed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Appointment Scheduled": {
+      "main": [
+        [
+          {
+            "node": "Confirm Receipt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parse Appointment Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Appointment Data": {
+      "main": [
+        [
+          {
+            "node": "Send Immediate Confirmation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Confirmation SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Appointment Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation SMS": {
+      "main": [
+        [
+          {
+            "node": "Should Send 24h Reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send 24h Reminder?": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 24h Before",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Until 2h Before",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 24h Before": {
+      "main": [
+        [
+          {
+            "node": "24h Reminder Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "24h Reminder SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "24h Reminder SMS": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 2h Before",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 2h Before": {
+      "main": [
+        [
+          {
+            "node": "2h Reminder SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2h Reminder SMS": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 30min Before",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 30min Before": {
+      "main": [
+        [
+          {
+            "node": "30min Final Reminder (Optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Response": {
+      "main": [
+        [
+          {
+            "node": "Route Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Response": {
+      "main": [
+        [
+          {
+            "node": "Mark Cancelled in CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Cancelled in CRM": {
+      "main": [
+        [
+          {
+            "node": "Notify Agent of Cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Completed": {
+      "main": [
+        [
+          {
+            "node": "Post-Appointment Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post-Appointment Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Mark Appointment Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "appointment-reminder-system",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "appointments",
+      "id": "2"
+    },
+    {
+      "name": "reminders",
+      "id": "3"
+    }
+  ]
+}

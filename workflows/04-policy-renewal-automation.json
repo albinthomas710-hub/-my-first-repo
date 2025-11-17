@@ -1,0 +1,427 @@
+{
+  "name": "🔄 Policy Renewal Automation System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-check-trigger",
+      "name": "Daily Renewal Check (8 AM)",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1.2,
+      "position": [250, 400],
+      "notes": "Runs daily at 8 AM to check for upcoming renewals"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblPolicies",
+          "mode": "list"
+        },
+        "filterByFormula": "=OR(\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 90,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 60,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 30,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 14,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 7,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 3,\n  DATETIME_DIFF({Expiration Date}, TODAY(), 'days') = 0\n)",
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "get-expiring-policies",
+      "name": "Get Expiring Policies",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [450, 400],
+      "notes": "Finds all policies expiring at key intervals"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate renewal details for each policy\nconst policies = $input.all();\nconst today = new Date();\n\nconst enrichedPolicies = policies.map(policy => {\n  const data = policy.json;\n  const expirationDate = new Date(data['Expiration Date']);\n  const daysUntilExpiration = Math.ceil((expirationDate - today) / (1000 * 60 * 60 * 24));\n  \n  // Determine notification stage\n  let stage, urgency, recommendedAction;\n  \n  if (daysUntilExpiration >= 90) {\n    stage = '90_day_notice';\n    urgency = 'low';\n    recommendedAction = 'Early notification - start shopping for quotes';\n  } else if (daysUntilExpiration >= 60) {\n    stage = '60_day_notice';\n    urgency = 'low';\n    recommendedAction = 'Review coverage needs, compare quotes';\n  } else if (daysUntilExpiration >= 30) {\n    stage = '30_day_notice';\n    urgency = 'medium';\n    recommendedAction = 'Schedule renewal consultation';\n  } else if (daysUntilExpiration >= 14) {\n    stage = '14_day_notice';\n    urgency = 'high';\n    recommendedAction = 'Finalize renewal decision';\n  } else if (daysUntilExpiration >= 7) {\n    stage = '7_day_urgent';\n    urgency = 'urgent';\n    recommendedAction = 'URGENT: Complete renewal immediately';\n  } else if (daysUntilExpiration >= 3) {\n    stage = '3_day_critical';\n    urgency = 'critical';\n    recommendedAction = 'CRITICAL: Coverage expires in 3 days';\n  } else {\n    stage = 'expiring_today';\n    urgency = 'emergency';\n    recommendedAction = 'EMERGENCY: Coverage expires TODAY';\n  }\n  \n  // Calculate estimated annual premium increase (typical 3-7%)\n  const currentPremium = parseFloat(data['Annual Premium']) || 0;\n  const estimatedIncrease = currentPremium * 0.05; // 5% average\n  const estimatedNewPremium = currentPremium + estimatedIncrease;\n  \n  // Calculate lifetime value\n  const yearsAsCustomer = data['Years as Customer'] || 1;\n  const lifetimeValue = currentPremium * yearsAsCustomer;\n  \n  return {\n    json: {\n      // Original data\n      policyId: data['Policy ID'],\n      policyNumber: data['Policy Number'],\n      firstName: data['First Name'],\n      lastName: data['Last Name'],\n      email: data['Email'],\n      phone: data['Phone'],\n      policyType: data['Policy Type'],\n      carrier: data['Carrier'],\n      expirationDate: data['Expiration Date'],\n      annualPremium: currentPremium,\n      \n      // Calculated fields\n      daysUntilExpiration: daysUntilExpiration,\n      stage: stage,\n      urgency: urgency,\n      recommendedAction: recommendedAction,\n      estimatedIncrease: estimatedIncrease,\n      estimatedNewPremium: estimatedNewPremium,\n      lifetimeValue: lifetimeValue,\n      yearsAsCustomer: yearsAsCustomer,\n      \n      // Agent assignment\n      assignedAgent: data['Assigned Agent'] || 'Unassigned',\n      agentEmail: data['Agent Email'] || 'admin@youragency.com',\n      agentPhone: data['Agent Phone'] || '(123) 456-7890',\n      \n      // Status tracking\n      renewalStatus: data['Renewal Status'] || 'pending',\n      lastContactDate: data['Last Contact Date'] || null,\n      renewalCallScheduled: data['Renewal Call Scheduled'] || false,\n      \n      // Timestamps\n      processedAt: today.toISOString(),\n      expirationFormatted: expirationDate.toLocaleDateString('en-US', { \n        weekday: 'long', \n        year: 'numeric', \n        month: 'long', \n        day: 'numeric' \n      })\n    }\n  };\n});\n\nreturn enrichedPolicies;"
+      },
+      "id": "calculate-renewal-data",
+      "name": "Calculate Renewal Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 400],
+      "notes": "Enriches data with renewal calculations"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "90-day",
+              "leftValue": "={{ $json.stage }}",
+              "rightValue": "90_day_notice",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-by-stage",
+      "name": "Route by Renewal Stage",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 400],
+      "notes": "Routes to appropriate notification workflow"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "sendTo": "={{ $json.email }}",
+        "subject": "📅 Good News: {{ $json.policyType }} Renewal in 90 Days",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; }\n    .content { padding: 40px 30px; background: #f9f9f9; }\n    .policy-box { background: white; padding: 25px; border-left: 4px solid #667eea; margin: 20px 0; border-radius: 5px; }\n    .highlight { background: #d4edda; padding: 15px; border-left: 4px solid #28a745; margin: 20px 0; }\n    .cta-button { background: #28a745; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📅 Renewal Time Approaching</h1>\n    </div>\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }}!</h2>\n      \n      <p>I wanted to give you a heads up that your <strong>{{ $json.policyType }}</strong> policy with {{ $json.carrier }} is coming up for renewal in about 90 days.</p>\n      \n      <div class=\"policy-box\">\n        <h3 style=\"margin-top: 0; color: #667eea;\">Your Policy Details</h3>\n        <p><strong>Policy:</strong> {{ $json.policyType }}</p>\n        <p><strong>Carrier:</strong> {{ $json.carrier }}</p>\n        <p><strong>Policy Number:</strong> {{ $json.policyNumber }}</p>\n        <p><strong>Expiration Date:</strong> {{ $json.expirationFormatted }}</p>\n        <p><strong>Current Annual Premium:</strong> ${{ $json.annualPremium }}</p>\n      </div>\n      \n      <div class=\"highlight\">\n        <h4 style=\"margin-top: 0;\">💰 Why Review Now?</h4>\n        <ul>\n          <li><strong>Save Money:</strong> Rates change constantly. Shopping now could save you ${{ Math.round($json.annualPremium * 0.15) }}+ per year</li>\n          <li><strong>Better Coverage:</strong> Your needs may have changed since you first bought this policy</li>\n          <li><strong>No Pressure:</strong> You have 90 days, so there's plenty of time to find the best option</li>\n        </ul>\n      </div>\n      \n      <p><strong>Here's what I recommend:</strong></p>\n      <p>Let's schedule a quick 15-minute call to:</p>\n      <ol>\n        <li>Review your current coverage to make sure it still fits your needs</li>\n        <li>Compare rates from 20+ carriers to see if we can save you money</li>\n        <li>Identify any coverage gaps or opportunities to improve your policy</li>\n      </ol>\n      \n      <a href=\"https://calendly.com/youragency/renewal-review?policy={{ $json.policyId }}\" class=\"cta-button\">Schedule Free Review →</a>\n      \n      <p>Or just reply to this email and let me know a good time to chat!</p>\n      \n      <p><strong>Remember:</strong> You've been a valued client for {{ $json.yearsAsCustomer }} {{ $json.yearsAsCustomer === 1 ? 'year' : 'years' }}. I want to make sure you're getting the best value possible.</p>\n      \n      <p>Talk soon!</p>\n      \n      <p>Best regards,<br>\n      <strong>{{ $json.assignedAgent }}</strong><br>\n      {{ $json.agentPhone }}<br>\n      {{ $json.agentEmail }}</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "email-90-day",
+      "name": "90-Day Notice Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1050, 200],
+      "notes": "Friendly early notice - no pressure"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "sendTo": "={{ $json.email }}",
+        "subject": "⏰ {{ $json.firstName }}, Your {{ $json.policyType }} Renews in 30 Days",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; }\n    .header { background: #ffc107; color: #333; padding: 40px 30px; text-align: center; }\n    .content { padding: 40px 30px; }\n    .urgent-box { background: #fff3cd; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; }\n    .savings-box { background: #d4edda; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px; }\n    .big-number { font-size: 36px; font-weight: bold; color: #28a745; }\n    .cta-button { background: #667eea; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>⏰ 30 Days Until Renewal</h1>\n    </div>\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }},</h2>\n      \n      <p>Your <strong>{{ $json.policyType }}</strong> policy is renewing in just 30 days ({{ $json.expirationFormatted }}).</p>\n      \n      <div class=\"urgent-box\">\n        <p><strong>⚠️ Important:</strong> If your carrier raises your rate at renewal, you'll be stuck with it for another year. Let's make sure that doesn't happen!</p>\n      </div>\n      \n      <p><strong>Here's what typically happens at renewal:</strong></p>\n      <ul>\n        <li>Carriers often increase rates by 5-15% (sometimes more)</li>\n        <li>They're counting on you to auto-renew without shopping around</li>\n        <li>You could be leaving hundreds of dollars on the table</li>\n      </ul>\n      \n      <div class=\"savings-box\">\n        <div>Based on your current premium, you could save:</div>\n        <div class=\"big-number\">${{ Math.round($json.annualPremium * 0.20) }}</div>\n        <div>per year by comparing quotes</div>\n      </div>\n      \n      <p><strong>Let me do the work for you:</strong></p>\n      <p>I'll compare rates from 20+ top-rated carriers and present you with the best 3-5 options. Takes about 15 minutes total.</p>\n      \n      <a href=\"https://calendly.com/youragency/renewal-review?policy={{ $json.policyId }}\" class=\"cta-button\">Schedule Your Review Now →</a>\n      \n      <p><strong>Or call me directly:</strong> {{ $json.agentPhone }}</p>\n      \n      <p>Don't wait until the last minute - let's get this handled!</p>\n      \n      <p>Best,<br>\n      <strong>{{ $json.assignedAgent }}</strong></p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "email-30-day",
+      "name": "30-Day Urgent Notice",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1050, 400],
+      "notes": "Creates moderate urgency"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! This is {{ $json.assignedAgent }}. Your {{ $json.policyType }} policy renews in 30 days. I can help you save up to ${{ Math.round($json.annualPremium * 0.20) }}/year. Let's chat! Call me: {{ $json.agentPhone }} or book here: [link]",
+        "options": {}
+      },
+      "id": "sms-30-day",
+      "name": "30-Day SMS Alert",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1050, 500],
+      "notes": "SMS for 30-day renewals"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "sendTo": "={{ $json.email }}",
+        "subject": "🚨 URGENT: {{ $json.policyType }} Expires in 7 Days!",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; }\n    .header { background: #dc3545; color: white; padding: 40px 30px; text-align: center; }\n    .content { padding: 40px 30px; }\n    .critical-box { background: #f8d7da; padding: 25px; border-left: 4px solid #dc3545; margin: 20px 0; text-align: center; }\n    .countdown { font-size: 48px; font-weight: bold; color: #dc3545; }\n    .cta-button { background: #dc3545; color: white; padding: 20px 50px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; font-size: 18px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>🚨 URGENT ACTION REQUIRED</h1>\n    </div>\n    <div class=\"content\">\n      <h2>{{ $json.firstName }}, Your Coverage is Expiring!</h2>\n      \n      <div class=\"critical-box\">\n        <div>Your {{ $json.policyType }} policy expires in:</div>\n        <div class=\"countdown\">{{ $json.daysUntilExpiration }} DAYS</div>\n        <div>Expiration Date: {{ $json.expirationFormatted }}</div>\n      </div>\n      \n      <p><strong style=\"color: #dc3545;\">⚠️ What happens if your policy lapses:</strong></p>\n      <ul>\n        <li>You'll have NO coverage - leaving you and your family exposed</li>\n        <li>{{ $json.policyType.includes('Life') ? 'Your family won\\'t have financial protection if something happens to you' : 'You could face penalties and higher rates when you reapply' }}</li>\n        <li>Getting new coverage can take time - you could have a gap in protection</li>\n        <li>New policies may require new medical exams or health questions</li>\n      </ul>\n      \n      <p style=\"background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107;\">\n        <strong>Good news:</strong> I can still help you renew OR find better coverage before your policy expires. But we need to act TODAY.\n      </p>\n      \n      <a href=\"tel:{{ $json.agentPhone }}\" class=\"cta-button\">CALL ME NOW: {{ $json.agentPhone }}</a>\n      \n      <p><strong>Can't talk right now?</strong></p>\n      <p>Reply to this email with \"RENEW\" and I'll call you within the hour.</p>\n      \n      <p>{{ $json.firstName }}, I don't want to see you lose this coverage. Let's get this handled today.</p>\n      \n      <p>Urgent regards,<br>\n      <strong>{{ $json.assignedAgent }}</strong><br>\n      {{ $json.agentPhone }}<br>\n      {{ $json.agentEmail }}</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "email-7-day-urgent",
+      "name": "7-Day URGENT Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1050, 700],
+      "notes": "High urgency - policy about to lapse"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=🚨 URGENT {{ $json.firstName }}: Your {{ $json.policyType }} policy expires in {{ $json.daysUntilExpiration }} DAYS ({{ $json.expirationFormatted }}). Don't lose coverage! Call {{ $json.assignedAgent }} NOW: {{ $json.agentPhone }}",
+        "options": {}
+      },
+      "id": "sms-7-day-urgent",
+      "name": "7-Day URGENT SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1050, 800],
+      "notes": "Urgent SMS alert"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "={{ $json.agentEmail }}",
+          "mode": "list"
+        },
+        "subject": "🚨 URGENT: Policy Expiring in {{ $json.daysUntilExpiration }} Days - {{ $json.firstName }} {{ $json.lastName }}",
+        "emailType": "html",
+        "message": "=<div style=\"background: #dc3545; color: white; padding: 20px; text-align: center;\">\n  <h1>🚨 URGENT: Policy Expiring Soon</h1>\n</div>\n<div style=\"padding: 30px; font-family: Arial, sans-serif;\">\n  <p><strong>ACTION REQUIRED:</strong> This policy expires in {{ $json.daysUntilExpiration }} days!</p>\n  \n  <h3>Client Information:</h3>\n  <ul>\n    <li><strong>Name:</strong> {{ $json.firstName }} {{ $json.lastName }}</li>\n    <li><strong>Phone:</strong> {{ $json.phone }}</li>\n    <li><strong>Email:</strong> {{ $json.email }}</li>\n    <li><strong>Policy Type:</strong> {{ $json.policyType }}</li>\n    <li><strong>Carrier:</strong> {{ $json.carrier }}</li>\n    <li><strong>Annual Premium:</strong> ${{ $json.annualPremium }}</li>\n    <li><strong>Lifetime Value:</strong> ${{ $json.lifetimeValue }}</li>\n    <li><strong>Expiration:</strong> {{ $json.expirationFormatted }}</li>\n  </ul>\n  \n  <p style=\"background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107;\">\n    <strong>📞 RECOMMENDED ACTION:</strong> Call this client TODAY to prevent lapse and ensure retention.\n  </p>\n  \n  <p>Automated notifications have been sent to the client.</p>\n  \n  <a href=\"https://airtable.com/{{ $json.policyId }}\" style=\"background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0;\">View in CRM →</a>\n</div>",
+        "options": {}
+      },
+      "id": "notify-agent-urgent",
+      "name": "Notify Agent - Urgent Renewal",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1250, 800],
+      "notes": "Alerts assigned agent for urgent renewals"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblPolicies",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Renewal Status": "={{ $json.stage }}",
+            "Last Contact Date": "={{ $json.processedAt }}",
+            "Days Until Expiration": "={{ $json.daysUntilExpiration }}",
+            "Estimated New Premium": "={{ $json.estimatedNewPremium }}",
+            "Notification Sent": true,
+            "Urgency Level": "={{ $json.urgency }}"
+          }
+        }
+      },
+      "id": "update-crm-status",
+      "name": "Update CRM with Renewal Status",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [1250, 400],
+      "notes": "Tracks all renewal activity in CRM"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Renewals",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        }
+      },
+      "id": "log-renewal-activity",
+      "name": "Log Renewal Activity",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1450, 400],
+      "notes": "Logs for renewal tracking and reporting"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate renewal ROI report\nconst policies = $input.all();\n\nconst summary = {\n  totalPoliciesExpiring: policies.length,\n  totalPremiumAtRisk: 0,\n  totalLifetimeValue: 0,\n  byUrgency: {\n    low: 0,\n    medium: 0,\n    high: 0,\n    urgent: 0,\n    critical: 0,\n    emergency: 0\n  },\n  byType: {},\n  avgPremium: 0,\n  estimatedRetentionRevenue: 0\n};\n\npolicies.forEach(policy => {\n  const data = policy.json;\n  \n  summary.totalPremiumAtRisk += data.annualPremium;\n  summary.totalLifetimeValue += data.lifetimeValue;\n  summary.byUrgency[data.urgency]++;\n  \n  if (!summary.byType[data.policyType]) {\n    summary.byType[data.policyType] = 0;\n  }\n  summary.byType[data.policyType]++;\n});\n\nsummary.avgPremium = summary.totalPremiumAtRisk / policies.length;\nsummary.estimatedRetentionRevenue = summary.totalPremiumAtRisk * 0.85; // 85% retention rate\n\nreturn {\n  json: {\n    reportDate: new Date().toISOString(),\n    summary: summary,\n    policies: policies.map(p => p.json)\n  }\n};"
+      },
+      "id": "generate-roi-report",
+      "name": "Generate Renewal ROI Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 600],
+      "notes": "Creates summary report of renewal opportunities"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "admin@youragency.com",
+          "mode": "list"
+        },
+        "subject": "📊 Daily Renewal Report - ${{ Math.round($json.summary.totalPremiumAtRisk) }} at Risk",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 800px; margin: 0 auto; padding: 20px; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }\n    .stat-box { display: inline-block; width: 30%; margin: 10px; padding: 20px; background: #f8f9fa; border-radius: 5px; text-align: center; }\n    .big-number { font-size: 36px; font-weight: bold; color: #667eea; }\n    .label { font-size: 14px; color: #666; }\n    .urgent-section { background: #f8d7da; padding: 20px; border-left: 4px solid #dc3545; margin: 20px 0; }\n    table { width: 100%; border-collapse: collapse; margin: 20px 0; }\n    th { background: #667eea; color: white; padding: 10px; text-align: left; }\n    td { padding: 10px; border-bottom: 1px solid #ddd; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📊 Daily Renewal Report</h1>\n      <p>{{ new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</p>\n    </div>\n    \n    <div style=\"padding: 30px;\">\n      <h2>Summary</h2>\n      \n      <div class=\"stat-box\">\n        <div class=\"big-number\">{{ $json.summary.totalPoliciesExpiring }}</div>\n        <div class=\"label\">Policies Expiring Soon</div>\n      </div>\n      \n      <div class=\"stat-box\">\n        <div class=\"big-number\">${{ Math.round($json.summary.totalPremiumAtRisk) }}</div>\n        <div class=\"label\">Premium at Risk</div>\n      </div>\n      \n      <div class=\"stat-box\">\n        <div class=\"big-number\">${{ Math.round($json.summary.estimatedRetentionRevenue) }}</div>\n        <div class=\"label\">Est. Retention Revenue</div>\n      </div>\n      \n      {{ ($json.summary.byUrgency.urgent + $json.summary.byUrgency.critical + $json.summary.byUrgency.emergency) > 0 ? `\n      <div class=\"urgent-section\">\n        <h3>🚨 Urgent Action Required</h3>\n        <p><strong>${$json.summary.byUrgency.urgent + $json.summary.byUrgency.critical + $json.summary.byUrgency.emergency}</strong> policies require immediate attention (7 days or less until expiration)</p>\n      </div>\n      ` : '' }}\n      \n      <h3>Breakdown by Urgency</h3>\n      <table>\n        <tr>\n          <th>Urgency Level</th>\n          <th>Count</th>\n        </tr>\n        <tr>\n          <td>🔴 Emergency (Expiring Today)</td>\n          <td>{{ $json.summary.byUrgency.emergency }}</td>\n        </tr>\n        <tr>\n          <td>🟠 Critical (3 Days)</td>\n          <td>{{ $json.summary.byUrgency.critical }}</td>\n        </tr>\n        <tr>\n          <td>🟡 Urgent (7 Days)</td>\n          <td>{{ $json.summary.byUrgency.urgent }}</td>\n        </tr>\n        <tr>\n          <td>🟢 High (14 Days)</td>\n          <td>{{ $json.summary.byUrgency.high }}</td>\n        </tr>\n        <tr>\n          <td>🔵 Medium (30 Days)</td>\n          <td>{{ $json.summary.byUrgency.medium }}</td>\n        </tr>\n        <tr>\n          <td>⚪ Low (60-90 Days)</td>\n          <td>{{ $json.summary.byUrgency.low }}</td>\n        </tr>\n      </table>\n      \n      <p style=\"margin-top: 30px; font-size: 12px; color: #666;\">All clients have been notified automatically. Review urgent renewals in your CRM.</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-daily-report",
+      "name": "Send Daily Renewal Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [850, 600],
+      "notes": "Daily summary for management"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Renewal Check (8 AM)": {
+      "main": [
+        [
+          {
+            "node": "Get Expiring Policies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Expiring Policies": {
+      "main": [
+        [
+          {
+            "node": "Calculate Renewal Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Renewal Details": {
+      "main": [
+        [
+          {
+            "node": "Route by Renewal Stage",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Renewal ROI Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Renewal Stage": {
+      "main": [
+        [
+          {
+            "node": "90-Day Notice Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "30-Day Urgent Notice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "30-Day SMS Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "7-Day URGENT Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "7-Day URGENT SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Agent - Urgent Renewal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "90-Day Notice Email": {
+      "main": [
+        [
+          {
+            "node": "Update CRM with Renewal Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "30-Day Urgent Notice": {
+      "main": [
+        [
+          {
+            "node": "Update CRM with Renewal Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7-Day URGENT Email": {
+      "main": [
+        [
+          {
+            "node": "Update CRM with Renewal Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM with Renewal Status": {
+      "main": [
+        [
+          {
+            "node": "Log Renewal Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Renewal ROI Report": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Renewal Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "policy-renewal-automation",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "renewals",
+      "id": "2"
+    },
+    {
+      "name": "retention",
+      "id": "3"
+    }
+  ]
+}

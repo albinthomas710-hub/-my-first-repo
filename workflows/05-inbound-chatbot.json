@@ -1,0 +1,356 @@
+{
+  "name": "💬 Inbound Lead Chatbot - 24/7 Qualification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatbot",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "chat-webhook",
+      "name": "Chatbot Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "webhookId": "chatbot-messages",
+      "notes": "Receives messages from website chat widget"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming chat message\nconst data = $input.first().json.body;\n\nreturn {\n  json: {\n    sessionId: data.sessionId || `session-${Date.now()}`,\n    messageId: data.messageId || `msg-${Date.now()}`,\n    userMessage: data.message || data.text || '',\n    userId: data.userId || data.visitorId,\n    userName: data.name || 'Visitor',\n    userEmail: data.email || null,\n    userPhone: data.phone || null,\n    timestamp: new Date().toISOString(),\n    conversationHistory: data.history || [],\n    metadata: {\n      source: data.source || 'website',\n      page: data.page || 'unknown',\n      referrer: data.referrer || null,\n      utm_source: data.utm_source || null,\n      utm_campaign: data.utm_campaign || null\n    }\n  }\n};"
+      },
+      "id": "parse-message",
+      "name": "Parse Chat Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 400],
+      "notes": "Standardizes incoming message data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Intelligent intent detection for insurance queries\nconst message = $input.first().json.userMessage.toLowerCase();\n\nlet intent = 'general';\nlet confidence = 0;\nlet suggestedResponse = '';\n\n// Life Insurance Intent\nif (message.match(/life insurance|term life|whole life|universal life|death benefit/i)) {\n  intent = 'life_insurance_inquiry';\n  confidence = 0.9;\n  suggestedResponse = 'life_insurance';\n}\n// Health Insurance Intent\nelse if (message.match(/health insurance|medical insurance|aca|obamacare|health plan|medicaid|medicare/i)) {\n  intent = 'health_insurance_inquiry';\n  confidence = 0.9;\n  suggestedResponse = 'health_insurance';\n}\n// Pricing Intent\nelse if (message.match(/how much|cost|price|rate|premium|quote|save money|cheaper/i)) {\n  intent = 'pricing_inquiry';\n  confidence = 0.85;\n  suggestedResponse = 'pricing_info';\n}\n// Quote Request\nelse if (message.match(/get a quote|need quote|want quote|quote me|give me a quote/i)) {\n  intent = 'quote_request';\n  confidence = 0.95;\n  suggestedResponse = 'capture_lead_info';\n}\n// Coverage Questions\nelse if (message.match(/what does.*cover|coverage|benefits|what's included|does it cover/i)) {\n  intent = 'coverage_question';\n  confidence = 0.85;\n  suggestedResponse = 'coverage_info';\n}\n// How It Works\nelse if (message.match(/how does.*work|how do i|process|steps|application/i)) {\n  intent = 'process_question';\n  confidence = 0.8;\n  suggestedResponse = 'process_explanation';\n}\n// Talk to Agent\nelse if (message.match(/speak.*agent|talk.*person|human|representative|call me/i)) {\n  intent = 'agent_request';\n  confidence = 0.95;\n  suggestedResponse = 'route_to_agent';\n}\n// Greeting\nelse if (message.match(/^(hi|hello|hey|good morning|good afternoon)/i)) {\n  intent = 'greeting';\n  confidence = 0.9;\n  suggestedResponse = 'welcome_message';\n}\n\nreturn {\n  json: {\n    ...$input.first().json,\n    intent: intent,\n    confidence: confidence,\n    suggestedResponse: suggestedResponse,\n    needsHumanAgent: intent === 'agent_request' || confidence < 0.7\n  }\n};"
+      },
+      "id": "detect-intent",
+      "name": "Detect Intent (AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 400],
+      "notes": "Uses pattern matching to detect user intent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "needs-agent",
+              "leftValue": "={{ $json.needsHumanAgent }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-intent",
+      "name": "Needs Human Agent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate automated responses based on intent\nconst data = $input.first().json;\nconst intent = data.suggestedResponse;\n\nconst responses = {\n  welcome_message: {\n    text: `Hi ${data.userName}! 👋 Thanks for visiting. I'm here to help you find the best insurance coverage at the best price.\\n\\nWhat can I help you with today?\\n\\n• Life Insurance\\n• Health Insurance\\n• Get a Quote\\n• Speak with an Agent`,\n    quickReplies: ['Life Insurance', 'Health Insurance', 'Get Quote', 'Talk to Agent']\n  },\n  \n  life_insurance: {\n    text: `Great question about life insurance! We offer several types:\\n\\n**Term Life** - Affordable coverage for a specific period (10, 20, 30 years)\\n**Whole Life** - Permanent coverage with cash value\\n**Universal Life** - Flexible premiums and death benefit\\n\\nMost of our clients save 20-40% by comparing quotes from 20+ carriers.\\n\\nWould you like to see what you qualify for?`,\n    quickReplies: ['Yes, get quote', 'Tell me more', 'Pricing info']\n  },\n  \n  health_insurance: {\n    text: `I can help you find health insurance! We work with:\\n\\n✓ ACA Marketplace Plans\\n✓ Medicare & Medicaid\\n✓ Supplemental Coverage\\n✓ Short-term Health Plans\\n\\nRates vary based on your age, location, and needs. Want to see your options?`,\n    quickReplies: ['Yes, show options', 'Compare plans', 'Talk to expert']\n  },\n  \n  pricing_info: {\n    text: `Great question! Insurance costs depend on several factors:\\n\\n📊 **For Life Insurance:**\\n• Your age (younger = lower rates)\\n• Health status\\n• Coverage amount needed\\n• Term length\\n\\nAverage costs:\\n• 30-year-old: $25-50/month for $500K\\n• 40-year-old: $40-80/month for $500K\\n\\n💡 **The best way to get YOUR exact price:** Let me compare quotes from 20+ carriers. Takes 2 minutes!\\n\\nReady to see your personalized rates?`,\n    quickReplies: ['Yes, get my quote', 'More info first']\n  },\n  \n  coverage_info: {\n    text: `Coverage varies by policy type, but here's what's typically included:\\n\\n**Life Insurance covers:**\\n✓ Death benefit to beneficiaries\\n✓ Some policies include living benefits\\n✓ Cash value accumulation (whole life)\\n\\n**Health Insurance covers:**\\n✓ Doctor visits & hospitalizations\\n✓ Prescription drugs\\n✓ Preventive care (usually 100%)\\n✓ Emergency services\\n\\nWant to discuss YOUR specific needs? I can connect you with a licensed agent who can explain exactly what you'd be covered for.`,\n    quickReplies: ['Yes, connect me', 'More questions']\n  },\n  \n  process_explanation: {\n    text: `Getting covered is simple! Here's how it works:\\n\\n**Step 1:** Tell us about your needs (2 minutes)\\n**Step 2:** We compare 20+ carriers instantly\\n**Step 3:** Licensed agent reviews best 3-5 options with you (15 min call)\\n**Step 4:** Choose your coverage\\n**Step 5:** Complete application\\n**Step 6:** You're covered! 🎉\\n\\nMost people are approved within 24-48 hours.\\n\\nReady to get started?`,\n    quickReplies: ['Yes, let\\'s start', 'Talk to agent first']\n  },\n  \n  capture_lead_info: {\n    text: `Perfect! I'll help you get quotes from 20+ top-rated carriers.\\n\\nTo get started, I just need a few quick details:\\n\\n1️⃣ What's your first name?`,\n    quickReplies: [],\n    action: 'start_lead_capture'\n  }\n};\n\nconst response = responses[intent] || responses.welcome_message;\n\nreturn {\n  json: {\n    ...data,\n    botResponse: response.text,\n    quickReplies: response.quickReplies,\n    action: response.action || 'continue_conversation',\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "generate-bot-response",
+      "name": "Generate Bot Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "notes": "Creates contextual automated responses"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"message\": $json.botResponse,\n  \"quickReplies\": $json.quickReplies,\n  \"action\": $json.action,\n  \"sessionId\": $json.sessionId,\n  \"timestamp\": $json.timestamp\n} }}"
+      },
+      "id": "send-bot-response",
+      "name": "Send Bot Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "notes": "Sends response back to chat widget"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "agent-needed",
+              "name": "message",
+              "value": "I'll connect you with one of our licensed insurance experts right away! They can answer your questions and help you find the perfect coverage.\\n\\n📋 To get you to the right person, please provide:\\n\\n1️⃣ Your name\\n2️⃣ Phone number\\n3️⃣ Email\\n4️⃣ What type of insurance you're interested in",
+              "type": "string"
+            },
+            {
+              "id": "action-type",
+              "name": "action",
+              "value": "collect_contact_info",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "request-contact-info",
+      "name": "Request Contact Info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1050, 500],
+      "notes": "Asks for contact details before routing to agent"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"message\": $json.message,\n  \"action\": $json.action,\n  \"sessionId\": $('Parse Chat Message').item.json.sessionId\n} }}"
+      },
+      "id": "send-contact-request",
+      "name": "Send Contact Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 500]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatbot-lead-captured",
+        "options": {}
+      },
+      "id": "lead-captured-webhook",
+      "name": "Lead Info Captured",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 700],
+      "webhookId": "chatbot-lead-captured",
+      "notes": "Triggered when chatbot collects lead information"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "normalize-lead",
+              "name": "leadData",
+              "value": "={{ {\n  firstName: $json.body.firstName,\n  lastName: $json.body.lastName,\n  email: $json.body.email,\n  phone: $json.body.phone,\n  insuranceType: $json.body.insuranceType,\n  source: 'chatbot',\n  sessionId: $json.body.sessionId,\n  capturedAt: $now.toISO()\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "normalize-lead-data",
+      "name": "Normalize Lead Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 700]
+    },
+    {
+      "parameters": {
+        "url": "https://your-n8n-instance.com/webhook/lead-intake",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.leadData }}",
+        "options": {}
+      },
+      "id": "send-to-qualification",
+      "name": "Send to Lead Qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [650, 700],
+      "notes": "Sends captured lead to main qualification workflow"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"message\": \"Thank you! One of our licensed agents will call you within the next hour. In the meantime, check your email for important information about \" + $json.leadData.insuranceType + \" insurance.\",\n  \"action\": \"lead_captured\",\n  \"status\": \"success\"\n} }}"
+      },
+      "id": "confirm-lead-capture",
+      "name": "Confirm Lead Captured",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 700]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblChatSessions",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Session ID": "={{ $json.sessionId }}",
+            "User Message": "={{ $json.userMessage }}",
+            "Bot Response": "={{ $json.botResponse }}",
+            "Intent": "={{ $json.intent }}",
+            "Confidence": "={{ $json.confidence }}",
+            "Timestamp": "={{ $json.timestamp }}",
+            "Lead Captured": "={{ $json.action === 'start_lead_capture' }}",
+            "Source Page": "={{ $json.metadata.page }}",
+            "UTM Source": "={{ $json.metadata.utm_source }}"
+          }
+        }
+      },
+      "id": "log-conversation",
+      "name": "Log Conversation",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [1050, 600],
+      "notes": "Tracks all chatbot interactions for analysis"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Chatbot Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Chat Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Chat Message": {
+      "main": [
+        [
+          {
+            "node": "Detect Intent (AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Intent (AI)": {
+      "main": [
+        [
+          {
+            "node": "Needs Human Agent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human Agent?": {
+      "main": [
+        [
+          {
+            "node": "Request Contact Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Bot Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Bot Response": {
+      "main": [
+        [
+          {
+            "node": "Send Bot Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Contact Info": {
+      "main": [
+        [
+          {
+            "node": "Send Contact Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Info Captured": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Lead Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Lead Qualification": {
+      "main": [
+        [
+          {
+            "node": "Confirm Lead Captured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "inbound-chatbot",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "chatbot",
+      "id": "2"
+    },
+    {
+      "name": "lead-generation",
+      "id": "3"
+    }
+  ]
+}

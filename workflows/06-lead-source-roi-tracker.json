@@ -1,0 +1,238 @@
+{
+  "name": "📊 Lead Source ROI Tracker & Analytics",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly-report-trigger",
+      "name": "Weekly Report (Monday 9 AM)",
+      "type": "n8n-nodes-base.schedule",
+      "typeVersion": 1.2,
+      "position": [250, 400],
+      "notes": "Generates comprehensive ROI report every Monday"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLeads",
+          "mode": "list"
+        },
+        "filterByFormula": "=AND(\n  DATETIME_DIFF(NOW(), {Received At}, 'days') <= 30,\n  {Lead Source} != ''\n)",
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "get-leads-last-30-days",
+      "name": "Get Leads (Last 30 Days)",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "notes": "Fetches all leads from the last 30 days"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblPolicies",
+          "mode": "list"
+        },
+        "filterByFormula": "=AND(\n  DATETIME_DIFF(NOW(), {Sale Date}, 'days') <= 30,\n  {Lead Source} != ''\n)",
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "get-closed-deals",
+      "name": "Get Closed Deals (Last 30 Days)",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [450, 500],
+      "notes": "Fetches all closed deals from last 30 days"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Comprehensive Lead Source ROI Analysis\nconst leads = $input.first().json;\nconst deals = $input.last().json;\n\n// Group leads by source\nconst leadsBySource = {};\nconst dealsBySource = {};\n\n// Process leads\nif (Array.isArray(leads)) {\n  leads.forEach(lead => {\n    const source = lead['Lead Source'] || 'Unknown';\n    if (!leadsBySource[source]) {\n      leadsBySource[source] = {\n        totalLeads: 0,\n        qualifiedLeads: 0,\n        hotLeads: 0,\n        disqualifiedLeads: 0,\n        avgScore: 0,\n        totalScore: 0\n      };\n    }\n    \n    leadsBySource[source].totalLeads++;\n    \n    if (lead['Status'] === 'QUALIFIED' || lead['Status'] === 'HOT_LEAD') {\n      leadsBySource[source].qualifiedLeads++;\n    }\n    if (lead['Status'] === 'HOT_LEAD') {\n      leadsBySource[source].hotLeads++;\n    }\n    if (lead['Status'] === 'DISQUALIFIED') {\n      leadsBySource[source].disqualifiedLeads++;\n    }\n    \n    const score = parseFloat(lead['Qualification Score']) || 0;\n    leadsBySource[source].totalScore += score;\n  });\n}\n\n// Process deals\nif (Array.isArray(deals)) {\n  deals.forEach(deal => {\n    const source = deal['Lead Source'] || 'Unknown';\n    if (!dealsBySource[source]) {\n      dealsBySource[source] = {\n        totalDeals: 0,\n        totalRevenue: 0,\n        avgDealSize: 0\n      };\n    }\n    \n    dealsBySource[source].totalDeals++;\n    const revenue = parseFloat(deal['Annual Premium']) || 0;\n    dealsBySource[source].totalRevenue += revenue;\n  });\n}\n\n// Calculate metrics per source\nconst sourceAnalysis = {};\nconst allSources = new Set([...Object.keys(leadsBySource), ...Object.keys(dealsBySource)]);\n\nallSources.forEach(source => {\n  const leadData = leadsBySource[source] || {\n    totalLeads: 0,\n    qualifiedLeads: 0,\n    hotLeads: 0,\n    disqualifiedLeads: 0,\n    totalScore: 0\n  };\n  \n  const dealData = dealsBySource[source] || {\n    totalDeals: 0,\n    totalRevenue: 0\n  };\n  \n  const avgLeadScore = leadData.totalLeads > 0 ? leadData.totalScore / leadData.totalLeads : 0;\n  const conversionRate = leadData.totalLeads > 0 ? (dealData.totalDeals / leadData.totalLeads) * 100 : 0;\n  const avgDealSize = dealData.totalDeals > 0 ? dealData.totalRevenue / dealData.totalDeals : 0;\n  const qualificationRate = leadData.totalLeads > 0 ? (leadData.qualifiedLeads / leadData.totalLeads) * 100 : 0;\n  \n  // Estimate cost per lead (you can customize these estimates)\n  const costPerLeadEstimates = {\n    'Facebook': 45,\n    'Google': 60,\n    'Referral': 0,\n    'Organic': 0,\n    'SmartFinancial': 55,\n    'Aged Leads': 15,\n    'Website': 30,\n    'Chatbot': 25\n  };\n  \n  const costPerLead = costPerLeadEstimates[source] || 40;\n  const totalCost = leadData.totalLeads * costPerLead;\n  const roi = totalCost > 0 ? ((dealData.totalRevenue - totalCost) / totalCost) * 100 : 0;\n  const revenuePerLead = leadData.totalLeads > 0 ? dealData.totalRevenue / leadData.totalLeads : 0;\n  \n  sourceAnalysis[source] = {\n    source: source,\n    \n    // Lead metrics\n    totalLeads: leadData.totalLeads,\n    qualifiedLeads: leadData.qualifiedLeads,\n    hotLeads: leadData.hotLeads,\n    disqualifiedLeads: leadData.disqualifiedLeads,\n    avgLeadScore: Math.round(avgLeadScore),\n    qualificationRate: Math.round(qualificationRate * 10) / 10,\n    \n    // Deal metrics\n    totalDeals: dealData.totalDeals,\n    totalRevenue: Math.round(dealData.totalRevenue),\n    avgDealSize: Math.round(avgDealSize),\n    conversionRate: Math.round(conversionRate * 10) / 10,\n    \n    // ROI metrics\n    costPerLead: costPerLead,\n    totalCost: totalCost,\n    roi: Math.round(roi * 10) / 10,\n    revenuePerLead: Math.round(revenuePerLead),\n    \n    // Quality grade\n    grade: roi > 200 ? 'A+' : roi > 100 ? 'A' : roi > 50 ? 'B' : roi > 0 ? 'C' : 'D',\n    \n    // Recommendation\n    recommendation: roi > 100 ? '🟢 SCALE UP - High ROI source' :\n                     roi > 50 ? '🟡 MAINTAIN - Profitable source' :\n                     roi > 0 ? '🟠 OPTIMIZE - Low ROI, needs improvement' :\n                     '🔴 PAUSE - Unprofitable, consider stopping'\n  };\n});\n\n// Sort by ROI\nconst sortedSources = Object.values(sourceAnalysis).sort((a, b) => b.roi - a.roi);\n\n// Calculate totals\nconst totals = {\n  totalLeads: sortedSources.reduce((sum, s) => sum + s.totalLeads, 0),\n  totalDeals: sortedSources.reduce((sum, s) => sum + s.totalDeals, 0),\n  totalRevenue: sortedSources.reduce((sum, s) => sum + s.totalRevenue, 0),\n  totalCost: sortedSources.reduce((sum, s) => sum + s.totalCost, 0),\n  avgConversionRate: 0,\n  overallROI: 0\n};\n\ntotals.avgConversionRate = totals.totalLeads > 0 ? (totals.totalDeals / totals.totalLeads) * 100 : 0;\ntotals.overallROI = totals.totalCost > 0 ? ((totals.totalRevenue - totals.totalCost) / totals.totalCost) * 100 : 0;\n\nreturn {\n  json: {\n    reportDate: new Date().toISOString(),\n    reportPeriod: 'Last 30 Days',\n    totals: totals,\n    sourceBreakdown: sortedSources,\n    topPerformers: sortedSources.slice(0, 3),\n    worstPerformers: sortedSources.slice(-3).reverse(),\n    recommendations: sortedSources.map(s => ({\n      source: s.source,\n      recommendation: s.recommendation,\n      roi: s.roi\n    }))\n  }\n};"
+      },
+      "id": "calculate-roi-metrics",
+      "name": "Calculate ROI Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 400],
+      "notes": "Performs comprehensive ROI analysis"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "admin@youragency.com",
+          "mode": "list"
+        },
+        "subject": "📊 Weekly Lead Source ROI Report - {{ new Date().toLocaleDateString() }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }\n    .container { max-width: 900px; margin: 0 auto; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; }\n    .summary { display: flex; justify-content: space-around; padding: 30px; background: #f8f9fa; }\n    .stat-box { text-align: center; padding: 20px; }\n    .big-number { font-size: 36px; font-weight: bold; color: #667eea; }\n    .label { font-size: 14px; color: #666; margin-top: 5px; }\n    table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }\n    th { background: #667eea; color: white; padding: 15px; text-align: left; font-weight: 600; }\n    td { padding: 12px 15px; border-bottom: 1px solid #e9ecef; }\n    .grade-a { background: #d4edda; color: #155724; font-weight: bold; padding: 5px 10px; border-radius: 3px; }\n    .grade-b { background: #fff3cd; color: #856404; font-weight: bold; padding: 5px 10px; border-radius: 3px; }\n    .grade-c { background: #f8d7da; color: #721c24; font-weight: bold; padding: 5px 10px; border-radius: 3px; }\n    .grade-d { background: #f8d7da; color: #721c24; font-weight: bold; padding: 5px 10px; border-radius: 3px; }\n    .positive { color: #28a745; font-weight: bold; }\n    .negative { color: #dc3545; font-weight: bold; }\n    .section { padding: 30px; }\n    .top-performer { background: #d4edda; padding: 20px; margin: 20px 0; border-left: 4px solid #28a745; }\n    .worst-performer { background: #f8d7da; padding: 20px; margin: 20px 0; border-left: 4px solid #dc3545; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📊 Lead Source ROI Report</h1>\n      <p>{{ $json.reportPeriod }} - Generated {{ new Date($json.reportDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) }}</p>\n    </div>\n    \n    <div class=\"summary\">\n      <div class=\"stat-box\">\n        <div class=\"big-number\">{{ $json.totals.totalLeads }}</div>\n        <div class=\"label\">Total Leads</div>\n      </div>\n      <div class=\"stat-box\">\n        <div class=\"big-number\">{{ $json.totals.totalDeals }}</div>\n        <div class=\"label\">Closed Deals</div>\n      </div>\n      <div class=\"stat-box\">\n        <div class=\"big-number\">${{ Math.round($json.totals.totalRevenue).toLocaleString() }}</div>\n        <div class=\"label\">Total Revenue</div>\n      </div>\n      <div class=\"stat-box\">\n        <div class=\"big-number\" style=\"{{ $json.totals.overallROI > 0 ? 'color: #28a745' : 'color: #dc3545' }}\">{{ Math.round($json.totals.overallROI) }}%</div>\n        <div class=\"label\">Overall ROI</div>\n      </div>\n    </div>\n    \n    <div class=\"section\">\n      <h2>🏆 Top Performing Sources</h2>\n      {{#each $json.topPerformers}}\n      <div class=\"top-performer\">\n        <h3>{{ this.source }} <span class=\"grade-{{ this.grade.toLowerCase().replace('+', '') }}\">{{ this.grade }}</span></h3>\n        <p><strong>ROI:</strong> <span class=\"positive\">{{ this.roi }}%</span> | \n        <strong>Leads:</strong> {{ this.totalLeads }} | \n        <strong>Deals:</strong> {{ this.totalDeals }} | \n        <strong>Revenue:</strong> ${{ this.totalRevenue.toLocaleString() }}</p>\n        <p><strong>Conversion Rate:</strong> {{ this.conversionRate }}% | \n        <strong>Avg Deal Size:</strong> ${{ this.avgDealSize.toLocaleString() }} | \n        <strong>Revenue/Lead:</strong> ${{ this.revenuePerLead }}</p>\n        <p style=\"font-size: 14px; margin-top: 10px;\">{{ this.recommendation }}</p>\n      </div>\n      {{/each}}\n      \n      <h2 style=\"margin-top: 40px;\">⚠️ Underperforming Sources</h2>\n      {{#each $json.worstPerformers}}\n      <div class=\"worst-performer\">\n        <h3>{{ this.source }} <span class=\"grade-{{ this.grade.toLowerCase().replace('+', '') }}\">{{ this.grade }}</span></h3>\n        <p><strong>ROI:</strong> <span class=\"{{ this.roi > 0 ? 'positive' : 'negative' }}\">{{ this.roi }}%</span> | \n        <strong>Leads:</strong> {{ this.totalLeads }} | \n        <strong>Deals:</strong> {{ this.totalDeals }} | \n        <strong>Revenue:</strong> ${{ this.totalRevenue.toLocaleString() }}</p>\n        <p><strong>Conversion Rate:</strong> {{ this.conversionRate }}% | \n        <strong>Cost:</strong> ${{ this.totalCost.toLocaleString() }} | \n        <strong>Revenue/Lead:</strong> ${{ this.revenuePerLead }}</p>\n        <p style=\"font-size: 14px; margin-top: 10px;\">{{ this.recommendation }}</p>\n      </div>\n      {{/each}}\n    </div>\n    \n    <div class=\"section\">\n      <h2>📈 Complete Source Breakdown</h2>\n      <table>\n        <thead>\n          <tr>\n            <th>Source</th>\n            <th>Grade</th>\n            <th>Leads</th>\n            <th>Deals</th>\n            <th>Conv. Rate</th>\n            <th>Revenue</th>\n            <th>Cost</th>\n            <th>ROI</th>\n          </tr>\n        </thead>\n        <tbody>\n          {{#each $json.sourceBreakdown}}\n          <tr>\n            <td><strong>{{ this.source }}</strong></td>\n            <td><span class=\"grade-{{ this.grade.toLowerCase().replace('+', '') }}\">{{ this.grade }}</span></td>\n            <td>{{ this.totalLeads }}</td>\n            <td>{{ this.totalDeals }}</td>\n            <td>{{ this.conversionRate }}%</td>\n            <td>${{ this.totalRevenue.toLocaleString() }}</td>\n            <td>${{ this.totalCost.toLocaleString() }}</td>\n            <td class=\"{{ this.roi > 0 ? 'positive' : 'negative' }}\">{{ this.roi }}%</td>\n          </tr>\n          {{/each}}\n        </tbody>\n      </table>\n    </div>\n    \n    <div class=\"section\" style=\"background: #f8f9fa; padding: 30px;\">\n      <h2>💡 Key Recommendations</h2>\n      <ul>\n        {{#each $json.recommendations}}\n        <li><strong>{{ this.source }}:</strong> {{ this.recommendation }}</li>\n        {{/each}}\n      </ul>\n      \n      <p style=\"margin-top: 30px; padding: 20px; background: #fff3cd; border-left: 4px solid #ffc107;\">\n        <strong>Action Items:</strong><br>\n        • Double down on sources with ROI > 100%<br>\n        • Optimize or pause sources with ROI < 0%<br>\n        • Test improving qualification process for medium-performing sources<br>\n        • Review cost per lead for all sources monthly\n      </p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-roi-report",
+      "name": "Send ROI Report Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [850, 400],
+      "notes": "Sends comprehensive weekly ROI report"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "ROI Tracking",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Report Date": "={{ $json.reportDate }}",
+            "Total Leads": "={{ $json.totals.totalLeads }}",
+            "Total Deals": "={{ $json.totals.totalDeals }}",
+            "Total Revenue": "={{ $json.totals.totalRevenue }}",
+            "Total Cost": "={{ $json.totals.totalCost }}",
+            "Overall ROI": "={{ $json.totals.overallROI }}",
+            "Conversion Rate": "={{ $json.totals.avgConversionRate }}"
+          }
+        }
+      },
+      "id": "log-to-sheet",
+      "name": "Log to Tracking Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [850, 550],
+      "notes": "Logs historical data for trend analysis"
+    },
+    {
+      "parameters": {
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"text\": \"📊 Weekly ROI Report\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"📊 Weekly Lead Source ROI Report\"\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Total Leads:* \" + $json.totals.totalLeads\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Closed Deals:* \" + $json.totals.totalDeals\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Revenue:* $\" + Math.round($json.totals.totalRevenue).toLocaleString()\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Overall ROI:* \" + Math.round($json.totals.overallROI) + \"%\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*🏆 Top Performer:* \" + $json.topPerformers[0].source + \" (\" + $json.topPerformers[0].roi + \"% ROI)\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"Full report sent via email\"\n        }\n      ]\n    }\n  ]\n} }}",
+        "options": {}
+      },
+      "id": "notify-slack",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 700],
+      "notes": "Sends summary to Slack channel"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly Report (Monday 9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Get Leads (Last 30 Days)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Closed Deals (Last 30 Days)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Leads (Last 30 Days)": {
+      "main": [
+        [
+          {
+            "node": "Calculate ROI Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Closed Deals (Last 30 Days)": {
+      "main": [
+        [
+          {
+            "node": "Calculate ROI Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate ROI Metrics": {
+      "main": [
+        [
+          {
+            "node": "Send ROI Report Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Tracking Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "lead-source-roi-tracker",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "analytics",
+      "id": "2"
+    },
+    {
+      "name": "roi",
+      "id": "3"
+    }
+  ]
+}

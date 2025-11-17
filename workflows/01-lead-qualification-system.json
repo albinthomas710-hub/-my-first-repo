@@ -1,0 +1,649 @@
+{
+  "name": "🎯 Lead Qualification System - Insurance",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-lead-intake",
+      "name": "Lead Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "lead-intake-endpoint",
+      "notes": "Receives leads from forms, lead vendors, CSV imports"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"message\": \"Lead received and processing\", \"leadId\": $json.leadId } }}"
+      },
+      "id": "webhook-response",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "leadId",
+              "value": "={{ $now.toFormat('yyyyMMdd') }}-{{ $randomString(8) }}"
+            },
+            {
+              "name": "receivedAt",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "firstName",
+              "value": "={{ $json.body.firstName || $json.body.first_name || '' }}"
+            },
+            {
+              "name": "lastName",
+              "value": "={{ $json.body.lastName || $json.body.last_name || '' }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.body.email || '' }}"
+            },
+            {
+              "name": "phone",
+              "value": "={{ $json.body.phone || $json.body.phoneNumber || '' }}"
+            },
+            {
+              "name": "zipCode",
+              "value": "={{ $json.body.zipCode || $json.body.zip || '' }}"
+            },
+            {
+              "name": "state",
+              "value": "={{ $json.body.state || '' }}"
+            },
+            {
+              "name": "insuranceType",
+              "value": "={{ $json.body.insuranceType || $json.body.productInterest || '' }}"
+            },
+            {
+              "name": "annualIncome",
+              "value": "={{ $json.body.annualIncome || $json.body.income || 0 }}"
+            },
+            {
+              "name": "age",
+              "value": "={{ $json.body.age || $json.body.dateOfBirth ? Math.floor((new Date() - new Date($json.body.dateOfBirth)) / 31557600000) : 0 }}"
+            },
+            {
+              "name": "timeline",
+              "value": "={{ $json.body.timeline || $json.body.urgency || 'not_specified' }}"
+            },
+            {
+              "name": "leadSource",
+              "value": "={{ $json.body.source || $json.body.utm_source || 'direct' }}"
+            },
+            {
+              "name": "currentCoverage",
+              "value": "={{ $json.body.hasInsurance || $json.body.currentCoverage || 'unknown' }}"
+            },
+            {
+              "name": "employmentStatus",
+              "value": "={{ $json.body.employmentStatus || 'not_specified' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-lead-data",
+      "name": "Normalize Lead Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [650, 300],
+      "notes": "Standardizes incoming data from different sources"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validation-email",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "validation-email-format",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "validation-phone",
+              "leftValue": "={{ $json.phone }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "validation-name",
+              "leftValue": "={{ $json.firstName }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combineOperation": "all"
+        },
+        "options": {}
+      },
+      "id": "validate-required-fields",
+      "name": "Validate Required Fields",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "notes": "Ensures minimum required data is present"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "score-base",
+              "name": "qualificationScore",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "score-reason",
+              "name": "disqualificationReason",
+              "value": "Missing required fields (email, phone, or name)",
+              "type": "string"
+            },
+            {
+              "id": "score-status",
+              "name": "status",
+              "value": "DISQUALIFIED",
+              "type": "string"
+            },
+            {
+              "id": "score-timestamp",
+              "name": "processedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mark-invalid",
+      "name": "Mark as Invalid",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1050, 450],
+      "notes": "Marks leads with missing data as disqualified"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Advanced Lead Scoring Algorithm for Insurance\n// Scores leads 0-100 based on multiple factors\n\nconst lead = $input.first().json;\n\nlet score = 0;\nconst scoreReasons = [];\nconst warnings = [];\n\n// === INCOME SCORING (30 points max) ===\nconst income = parseInt(lead.annualIncome) || 0;\nif (income >= 75000) {\n  score += 30;\n  scoreReasons.push('High income bracket (+30)');\n} else if (income >= 50000) {\n  score += 20;\n  scoreReasons.push('Mid-high income (+20)');\n} else if (income >= 35000) {\n  score += 10;\n  scoreReasons.push('Mid income (+10)');\n} else if (income > 0) {\n  score += 5;\n  scoreReasons.push('Low income (+5)');\n  warnings.push('Income below ideal threshold');\n} else {\n  warnings.push('Income not provided');\n}\n\n// === TIMELINE/URGENCY SCORING (25 points max) ===\nconst timeline = (lead.timeline || '').toLowerCase();\nif (timeline.includes('immediate') || timeline.includes('asap') || timeline === 'now') {\n  score += 25;\n  scoreReasons.push('Immediate need (+25)');\n} else if (timeline.includes('week') || timeline.includes('30') || timeline === 'this_month') {\n  score += 20;\n  scoreReasons.push('Short-term need (+20)');\n} else if (timeline.includes('month') || timeline.includes('90')) {\n  score += 10;\n  scoreReasons.push('Medium-term timeline (+10)');\n} else {\n  score += 5;\n  warnings.push('No urgency indicated');\n}\n\n// === AGE SCORING (15 points max) ===\nconst age = parseInt(lead.age) || 0;\nif (age >= 25 && age <= 65) {\n  score += 15;\n  scoreReasons.push('Ideal age range (+15)');\n} else if (age >= 18 && age <= 75) {\n  score += 10;\n  scoreReasons.push('Acceptable age range (+10)');\n} else if (age > 0) {\n  score += 3;\n  warnings.push('Age outside prime range');\n}\n\n// === INSURANCE TYPE SCORING (15 points max) ===\nconst insuranceType = (lead.insuranceType || '').toLowerCase();\nconst highValueTypes = ['life', 'whole life', 'universal', 'term life'];\nconst mediumValueTypes = ['health', 'medicare', 'aca', 'supplemental'];\n\nif (highValueTypes.some(type => insuranceType.includes(type))) {\n  score += 15;\n  scoreReasons.push('High-value insurance type (+15)');\n} else if (mediumValueTypes.some(type => insuranceType.includes(type))) {\n  score += 10;\n  scoreReasons.push('Medium-value insurance type (+10)');\n} else if (insuranceType) {\n  score += 5;\n  scoreReasons.push('Insurance type specified (+5)');\n} else {\n  warnings.push('Insurance type not specified');\n}\n\n// === EMPLOYMENT STATUS (10 points max) ===\nconst employment = (lead.employmentStatus || '').toLowerCase();\nif (employment.includes('full') || employment.includes('self-employed')) {\n  score += 10;\n  scoreReasons.push('Stable employment (+10)');\n} else if (employment.includes('part')) {\n  score += 5;\n  scoreReasons.push('Part-time employment (+5)');\n} else if (employment.includes('retired')) {\n  score += 8;\n  scoreReasons.push('Retired status (+8)');\n}\n\n// === CURRENT COVERAGE BONUS (5 points) ===\nconst currentCoverage = (lead.currentCoverage || '').toLowerCase();\nif (currentCoverage === 'yes' || currentCoverage.includes('has')) {\n  score += 5;\n  scoreReasons.push('Has existing coverage - upsell opportunity (+5)');\n}\n\n// === LEAD SOURCE QUALITY ADJUSTMENT ===\nconst leadSource = (lead.leadSource || '').toLowerCase();\nconst premiumSources = ['referral', 'organic', 'direct'];\nconst goodSources = ['google', 'facebook', 'linkedin'];\nconst lowQualitySources = ['aged', 'bulk', 'shared'];\n\nif (premiumSources.some(src => leadSource.includes(src))) {\n  score += 5;\n  scoreReasons.push('Premium lead source (+5)');\n} else if (lowQualitySources.some(src => leadSource.includes(src))) {\n  score -= 10;\n  scoreReasons.push('Low-quality source (-10)');\n  warnings.push('Lead from low-quality source');\n}\n\n// === GEOGRAPHIC SCORING ===\nconst state = (lead.state || '').toUpperCase();\nconst highValueStates = ['CA', 'NY', 'TX', 'FL', 'IL'];\nif (highValueStates.includes(state)) {\n  score += 5;\n  scoreReasons.push('High-value state (+5)');\n}\n\n// === DETERMINE QUALIFICATION STATUS ===\nlet status = 'DISQUALIFIED';\nlet priority = 'LOW';\nlet assignmentRule = 'do_not_assign';\n\nif (score >= 75) {\n  status = 'HOT_LEAD';\n  priority = 'URGENT';\n  assignmentRule = 'top_performer';\n} else if (score >= 60) {\n  status = 'QUALIFIED';\n  priority = 'HIGH';\n  assignmentRule = 'round_robin';\n} else if (score >= 40) {\n  status = 'POTENTIAL';\n  priority = 'MEDIUM';\n  assignmentRule = 'nurture_sequence';\n} else if (score >= 25) {\n  status = 'LOW_PRIORITY';\n  priority = 'LOW';\n  assignmentRule = 'long_term_nurture';\n}\n\n// === CALCULATE ROI ESTIMATE ===\nlet estimatedValue = 0;\nif (insuranceType.includes('life') || insuranceType.includes('whole')) {\n  estimatedValue = income * 0.15; // 15% of annual income typical commission\n} else if (insuranceType.includes('health') || insuranceType.includes('medicare')) {\n  estimatedValue = 500; // Average health insurance commission\n}\n\n// === RETURN ENRICHED LEAD DATA ===\nreturn {\n  json: {\n    ...lead,\n    qualificationScore: score,\n    status: status,\n    priority: priority,\n    assignmentRule: assignmentRule,\n    scoreReasons: scoreReasons,\n    warnings: warnings,\n    estimatedValue: estimatedValue,\n    processedAt: new Date().toISOString(),\n    shouldContact: score >= 40,\n    recommendedAction: score >= 75 ? 'Call within 5 minutes' : \n                       score >= 60 ? 'Call within 1 hour' :\n                       score >= 40 ? 'Add to follow-up sequence' :\n                       'Add to long-term nurture'\n  }\n};"
+      },
+      "id": "calculate-lead-score",
+      "name": "Calculate Lead Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 150],
+      "notes": "Advanced scoring algorithm - evaluates 8+ factors"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "route-hot",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "HOT_LEAD",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combineOperation": "any"
+        },
+        "options": {}
+      },
+      "id": "route-hot-leads",
+      "name": "Route Hot Leads",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1250, 150],
+      "notes": "Routes leads based on qualification status"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "route-qualified",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "QUALIFIED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-qualified",
+      "name": "Route Qualified",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 350]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "route-nurture",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "POTENTIAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "route-low",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "LOW_PRIORITY",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combineOperation": "any"
+        }
+      },
+      "id": "route-nurture",
+      "name": "Route Nurture",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 550]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list",
+          "cachedResultName": "Insurance Leads"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLeads",
+          "mode": "list",
+          "cachedResultName": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $json.leadId }}",
+            "First Name": "={{ $json.firstName }}",
+            "Last Name": "={{ $json.lastName }}",
+            "Email": "={{ $json.email }}",
+            "Phone": "={{ $json.phone }}",
+            "Zip Code": "={{ $json.zipCode }}",
+            "State": "={{ $json.state }}",
+            "Insurance Type": "={{ $json.insuranceType }}",
+            "Annual Income": "={{ $json.annualIncome }}",
+            "Age": "={{ $json.age }}",
+            "Timeline": "={{ $json.timeline }}",
+            "Lead Source": "={{ $json.leadSource }}",
+            "Qualification Score": "={{ $json.qualificationScore }}",
+            "Status": "={{ $json.status }}",
+            "Priority": "={{ $json.priority }}",
+            "Estimated Value": "={{ $json.estimatedValue }}",
+            "Score Reasons": "={{ $json.scoreReasons.join(', ') }}",
+            "Warnings": "={{ $json.warnings.join(', ') }}",
+            "Recommended Action": "={{ $json.recommendedAction }}",
+            "Received At": "={{ $json.receivedAt }}",
+            "Processed At": "={{ $json.processedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-to-airtable",
+      "name": "Save to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [1650, 150],
+      "notes": "Stores all leads in Airtable database"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "admin@youragency.com",
+          "mode": "list"
+        },
+        "subject": "🔥 HOT LEAD ALERT - {{ $json.firstName }} {{ $json.lastName }} (Score: {{ $json.qualificationScore }})",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }\n    .score-badge { background: #fff; color: #667eea; padding: 10px 20px; border-radius: 20px; font-size: 24px; font-weight: bold; display: inline-block; margin-top: 10px; }\n    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }\n    .info-row { margin: 15px 0; padding: 10px; background: white; border-left: 4px solid #667eea; }\n    .label { font-weight: bold; color: #667eea; }\n    .urgent { background: #ff4444; color: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: center; font-weight: bold; }\n    .action-btn { background: #28a745; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>🔥 HOT LEAD ALERT!</h1>\n      <div class=\"score-badge\">Score: {{ $json.qualificationScore }}/100</div>\n    </div>\n    <div class=\"content\">\n      <div class=\"urgent\">\n        ⚡ ACTION REQUIRED: {{ $json.recommendedAction }}\n      </div>\n      \n      <h2>Lead Information</h2>\n      <div class=\"info-row\">\n        <span class=\"label\">Name:</span> {{ $json.firstName }} {{ $json.lastName }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Email:</span> {{ $json.email }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Phone:</span> {{ $json.phone }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Location:</span> {{ $json.state }} - {{ $json.zipCode }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Insurance Type:</span> {{ $json.insuranceType }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Annual Income:</span> ${{ $json.annualIncome }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Timeline:</span> {{ $json.timeline }}\n      </div>\n      <div class=\"info-row\">\n        <span class=\"label\">Estimated Value:</span> ${{ $json.estimatedValue }}\n      </div>\n      \n      <h3>Why This Lead Scored High:</h3>\n      <ul>\n        {{#each $json.scoreReasons}}\n        <li>{{ this }}</li>\n        {{/each}}\n      </ul>\n      \n      <a href=\"https://airtable.com/{{ $json.leadId }}\" class=\"action-btn\">View in CRM →</a>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "notify-hot-lead",
+      "name": "Notify Team - Hot Lead",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1850, 50],
+      "notes": "Instant notification for hot leads"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "Hi {{ $json.firstName }}! Thanks for your interest in {{ $json.insuranceType }} insurance. We've received your information and one of our licensed agents will call you within the next hour. - {{ $('Set Team Info').item.json.agencyName }}",
+        "options": {}
+      },
+      "id": "sms-qualified-lead",
+      "name": "SMS to Qualified Lead",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1850, 350],
+      "notes": "Sends confirmation SMS to qualified leads"
+    },
+    {
+      "parameters": {
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"text\": \"New Qualified Lead\",\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"✅ Qualified Lead: \" + $json.firstName + \" \" + $json.lastName\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Score:* \" + $json.qualificationScore + \"/100\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Insurance:* \" + $json.insuranceType\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Phone:* \" + $json.phone\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Est. Value:* $\" + $json.estimatedValue\n        }\n      ]\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": $json.recommendedAction\n        }\n      ]\n    }\n  ]\n} }}",
+        "options": {}
+      },
+      "id": "notify-slack-qualified",
+      "name": "Notify Slack - Qualified",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 450],
+      "notes": "Posts qualified leads to Slack channel"
+    },
+    {
+      "parameters": {
+        "url": "https://api.yourautoresponder.com/v1/subscribers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"email\": $json.email,\n  \"first_name\": $json.firstName,\n  \"last_name\": $json.lastName,\n  \"phone\": $json.phone,\n  \"tags\": [\"nurture\", $json.insuranceType, $json.status],\n  \"custom_fields\": {\n    \"lead_score\": $json.qualificationScore,\n    \"insurance_type\": $json.insuranceType,\n    \"timeline\": $json.timeline\n  }\n} }}",
+        "options": {}
+      },
+      "id": "add-to-nurture",
+      "name": "Add to Nurture Sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 550],
+      "notes": "Adds medium-priority leads to email nurture"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "log-to-sheet",
+      "name": "Log All Leads to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1650, 650],
+      "notes": "Logs all leads for reporting and analysis"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "team-info",
+              "name": "agencyName",
+              "value": "Your Insurance Agency",
+              "type": "string"
+            },
+            {
+              "id": "team-phone",
+              "name": "agencyPhone",
+              "value": "+1234567890",
+              "type": "string"
+            },
+            {
+              "id": "team-email",
+              "name": "agencyEmail",
+              "value": "info@youragency.com",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "set-team-info",
+      "name": "Set Team Info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 150],
+      "notes": "Configure your agency information here"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lead Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Validate Required Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Required Fields": {
+      "main": [
+        [
+          {
+            "node": "Calculate Lead Score",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Lead Score": {
+      "main": [
+        [
+          {
+            "node": "Route Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Hot Leads": {
+      "main": [
+        [
+          {
+            "node": "Save to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Qualified": {
+      "main": [
+        [
+          {
+            "node": "SMS to Qualified Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack - Qualified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route Nurture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Nurture": {
+      "main": [
+        [
+          {
+            "node": "Add to Nurture Sequence",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log All Leads to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Notify Team - Hot Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "SMS to Qualified Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Invalid": {
+      "main": [
+        [
+          {
+            "node": "Log All Leads to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "lead-qualification-system",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "lead-qualification",
+      "id": "2"
+    },
+    {
+      "name": "roi-automation",
+      "id": "3"
+    }
+  ]
+}

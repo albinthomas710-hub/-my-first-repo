@@ -1,0 +1,657 @@
+{
+  "name": "📞 Multi-Touch Follow-Up Machine - Insurance",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "webhook",
+        "path": "follow-up-trigger",
+        "options": {}
+      },
+      "id": "trigger-follow-up",
+      "name": "Trigger: New Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "webhookId": "follow-up-trigger",
+      "notes": "Triggered when new qualified/potential lead enters system"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sequence-id",
+              "name": "sequenceId",
+              "value": "={{ $json.leadId }}-{{ $now.toFormat('yyyyMMddHHmmss') }}",
+              "type": "string"
+            },
+            {
+              "id": "sequence-start",
+              "name": "sequenceStartedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "touch-count",
+              "name": "touchCount",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "responded",
+              "name": "hasResponded",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "sequence-active",
+              "name": "sequenceActive",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "id": "init-sequence",
+      "name": "Initialize Sequence",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 400],
+      "notes": "Sets up tracking variables for follow-up sequence"
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@youragency.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.firstName }}, Quick Question About Your {{ $json.insuranceType }} Coverage",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }\n    .container { max-width: 600px; margin: 0 auto; background: white; }\n    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; }\n    .content { padding: 40px 30px; }\n    .highlight { background: #f0f4ff; padding: 20px; border-left: 4px solid #667eea; margin: 20px 0; }\n    .cta-button { background: #28a745; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n    .footer { background: #f9f9f9; padding: 20px 30px; text-align: center; font-size: 12px; color: #666; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>Hi {{ $json.firstName }}! 👋</h1>\n    </div>\n    <div class=\"content\">\n      <p>I saw you were looking into {{ $json.insuranceType }} coverage{{ $json.timeline === 'immediate' || $json.timeline === 'asap' ? ' and mentioned you needed coverage soon' : '' }}.</p>\n      \n      <div class=\"highlight\">\n        <strong>Here's what I can help with:</strong>\n        <ul>\n          <li>Find the best rates for your situation (often 20-40% lower than what you'd find on your own)</li>\n          <li>Compare multiple carriers in minutes</li>\n          <li>Get personalized recommendations based on your needs</li>\n          <li>Answer any questions you have about coverage options</li>\n        </ul>\n      </div>\n      \n      <p>I've helped {{ $json.state }} residents save an average of $${{\n        $json.insuranceType.toLowerCase().includes('life') ? '847' : \n        $json.insuranceType.toLowerCase().includes('health') ? '1,234' : \n        '650'\n      }} per year on their insurance.</p>\n      \n      <p><strong>When would be a good time for a quick 10-minute call?</strong></p>\n      \n      <a href=\"https://calendly.com/youragency/consultation?email={{ $json.email }}&name={{ $json.firstName }}%20{{ $json.lastName }}\" class=\"cta-button\">Schedule Your Free Consultation →</a>\n      \n      <p>Or simply reply to this email with a day/time that works for you.</p>\n      \n      <p>Looking forward to helping you!</p>\n      \n      <p>Best regards,<br>\n      <strong>Your Insurance Team</strong><br>\n      Licensed Insurance Advisor<br>\n      📞 (123) 456-7890</p>\n    </div>\n    <div class=\"footer\">\n      <p>You're receiving this because you requested information about {{ $json.insuranceType }} insurance.</p>\n      <p><a href=\"{{ $json.unsubscribeUrl }}\">Unsubscribe</a></p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "touch-1-email",
+      "name": "Touch 1: Welcome Email (Immediate)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [650, 250],
+      "notes": "Sent immediately after lead qualification"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! It's [Your Name] from [Agency]. I saw your interest in {{ $json.insuranceType }} coverage. I can help you find the best rates - often 20-40% lower. When's a good time for a quick call? Reply YES to connect today!",
+        "options": {}
+      },
+      "id": "touch-1-sms",
+      "name": "Touch 1: Intro SMS (Immediate)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [650, 400],
+      "notes": "Sent immediately - friendly introduction"
+    },
+    {
+      "parameters": {
+        "unit": "hours",
+        "amount": 24
+      },
+      "id": "wait-day-1",
+      "name": "Wait 24 Hours",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [850, 400],
+      "notes": "Waits before sending second touch"
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@youragency.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.firstName }}, Here's How Much You Could Save on {{ $json.insuranceType }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; background: white; }\n    .content { padding: 40px 30px; }\n    .savings-box { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px; margin: 20px 0; }\n    .big-number { font-size: 48px; font-weight: bold; }\n    .comparison { background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 15px 0; }\n    .cta-button { background: #667eea; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }},</h2>\n      \n      <p>I wanted to share something interesting with you...</p>\n      \n      <div class=\"savings-box\">\n        <div>Most {{ $json.state }} residents overpay for {{ $json.insuranceType }} by</div>\n        <div class=\"big-number\">${{\n          $json.insuranceType.toLowerCase().includes('life') ? '847' : \n          $json.insuranceType.toLowerCase().includes('health') ? '1,234' : \n          '650'\n        }}</div>\n        <div>per year</div>\n      </div>\n      \n      <p><strong>Here's why:</strong></p>\n      <div class=\"comparison\">\n        ❌ Most people compare only 2-3 insurance companies<br>\n        ✅ We compare 20+ carriers to find you the absolute best rate\n      </div>\n      \n      <div class=\"comparison\">\n        ❌ Online quotes often miss discounts you qualify for<br>\n        ✅ We know all the insider discounts and how to stack them\n      </div>\n      \n      <div class=\"comparison\">\n        ❌ DIY research takes hours and is confusing<br>\n        ✅ We do all the work in about 10 minutes\n      </div>\n      \n      <p><strong>Want to see what you qualify for?</strong></p>\n      \n      <a href=\"https://calendly.com/youragency/consultation\" class=\"cta-button\">Yes, Show Me My Savings →</a>\n      \n      <p>Or call/text me directly: <strong>(123) 456-7890</strong></p>\n      \n      <p>Talk soon!</p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "touch-2-email",
+      "name": "Touch 2: Value Prop Email (Day 1)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 250],
+      "notes": "Day 1 - Focus on savings and value"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}! Quick question - are you still looking for {{ $json.insuranceType }} coverage? I can show you quotes from 20+ carriers in just 10 mins. Reply with a good time to chat or call me: (123) 456-7890",
+        "options": {}
+      },
+      "id": "touch-2-sms",
+      "name": "Touch 2: Follow-up SMS (Day 1)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1050, 400],
+      "notes": "Day 1 - Gentle reminder"
+    },
+    {
+      "parameters": {
+        "unit": "days",
+        "amount": 2
+      },
+      "id": "wait-day-3",
+      "name": "Wait 2 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1250, 400],
+      "notes": "Wait until Day 3"
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@youragency.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.firstName }}, 3 Common {{ $json.insuranceType }} Mistakes to Avoid",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.8; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; }\n    .content { padding: 40px 30px; }\n    .mistake { background: #fff3cd; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; }\n    .mistake-number { font-size: 24px; font-weight: bold; color: #ffc107; }\n    .solution { background: #d4edda; padding: 15px; margin: 10px 0; border-radius: 5px; }\n    .cta-button { background: #28a745; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"content\">\n      <h2>Hi {{ $json.firstName }},</h2>\n      \n      <p>Over my 15 years helping {{ $json.state }} residents with insurance, I've seen these 3 costly mistakes over and over...</p>\n      \n      <div class=\"mistake\">\n        <div class=\"mistake-number\">Mistake #1</div>\n        <strong>Choosing the cheapest policy without reading the fine print</strong>\n        <p>Many people get surprised by what's NOT covered when they need it most.</p>\n        <div class=\"solution\">✅ <strong>Better approach:</strong> We review all coverage details and find the best VALUE (not just lowest price).</div>\n      </div>\n      \n      <div class=\"mistake\">\n        <div class=\"mistake-number\">Mistake #2</div>\n        <strong>{{ $json.insuranceType.toLowerCase().includes('life') ? 'Waiting too long to get coverage' : 'Staying with the same carrier year after year' }}</strong>\n        <p>{{ $json.insuranceType.toLowerCase().includes('life') ? 'Rates go up as you age and health changes. The best time to get coverage is NOW.' : 'Carriers often raise rates on existing customers while offering better deals to new ones.' }}</p>\n        <div class=\"solution\">✅ <strong>Better approach:</strong> {{ $json.insuranceType.toLowerCase().includes('life') ? 'Lock in your rate while you\\'re younger and healthier.' : 'Review your coverage annually to ensure you\\'re getting the best rate.' }}</div>\n      </div>\n      \n      <div class=\"mistake\">\n        <div class=\"mistake-number\">Mistake #3</div>\n        <strong>{{ $json.insuranceType.toLowerCase().includes('life') ? 'Not getting enough coverage' : 'Paying for coverage you don\\'t need' }}</strong>\n        <p>{{ $json.insuranceType.toLowerCase().includes('life') ? 'Most people underestimate how much coverage their family would need.' : 'Many policies include add-ons you\\'ll never use.' }}</p>\n        <div class=\"solution\">✅ <strong>Better approach:</strong> We calculate exactly what you need - no more, no less.</div>\n      </div>\n      \n      <p><strong>Want to make sure you're not making these mistakes?</strong></p>\n      <p>Let's do a quick 10-minute review. I'll show you:</p>\n      <ul>\n        <li>Your best coverage options</li>\n        <li>Where you might be overpaying</li>\n        <li>How to maximize your coverage while minimizing cost</li>\n      </ul>\n      \n      <a href=\"https://calendly.com/youragency/consultation\" class=\"cta-button\">Schedule Free Review →</a>\n      \n      <p>Or reply to this email with \"YES\" and I'll call you.</p>\n      \n      <p>Here to help,<br>\n      <strong>Your Insurance Team</strong></p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "touch-3-email",
+      "name": "Touch 3: Education Email (Day 3)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1450, 250],
+      "notes": "Day 3 - Educational content builds trust"
+    },
+    {
+      "parameters": {
+        "unit": "days",
+        "amount": 2
+      },
+      "id": "wait-day-5",
+      "name": "Wait 2 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1650, 400]
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hey {{ $json.firstName }}, it's [Name] again. I know life gets busy! I've set aside time tomorrow to help a few people find better {{ $json.insuranceType }} rates. Want me to include you? Just reply YES or call (123) 456-7890. -[Your Agency]",
+        "options": {}
+      },
+      "id": "touch-4-sms",
+      "name": "Touch 4: Scarcity SMS (Day 5)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1850, 400],
+      "notes": "Day 5 - Creates gentle urgency"
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@youragency.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.firstName }}, Real Stories from {{ $json.state }} Residents Like You",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }\n    .testimonial { background: #f8f9fa; padding: 25px; border-left: 4px solid #667eea; margin: 20px 0; border-radius: 5px; }\n    .author { font-weight: bold; color: #667eea; margin-top: 10px; }\n    .stars { color: #ffc107; font-size: 20px; }\n    .cta-button { background: #667eea; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 40px 30px;\">\n    <h2>Hi {{ $json.firstName }},</h2>\n    \n    <p>I wanted to share what some of your neighbors in {{ $json.state }} have said after working with us...</p>\n    \n    <div class=\"testimonial\">\n      <div class=\"stars\">⭐⭐⭐⭐⭐</div>\n      <p>\"I was paying $285/month for my {{ $json.insuranceType.toLowerCase().includes('life') ? 'term life' : 'health' }} insurance. After working with [Agency Name], I'm now paying $167/month for BETTER coverage. Saved over $1,400 this year!\"</p>\n      <div class=\"author\">- Sarah M., {{ $json.state }}</div>\n    </div>\n    \n    <div class=\"testimonial\">\n      <div class=\"stars\">⭐⭐⭐⭐⭐</div>\n      <p>\"I put off getting {{ $json.insuranceType }} for years because I thought it would be complicated and expensive. [Agent Name] made it so easy - the whole process took 15 minutes and I'm paying way less than I expected.\"</p>\n      <div class=\"author\">- Mike T., {{ $json.state }}</div>\n    </div>\n    \n    <div class=\"testimonial\">\n      <div class=\"stars\">⭐⭐⭐⭐⭐</div>\n      <p>\"What I appreciated most was that [Agent Name] didn't try to upsell me. They helped me find exactly what I needed at the best price. No pressure, just honest advice.\"</p>\n      <div class=\"author\">- Jennifer L., {{ $json.state }}</div>\n    </div>\n    \n    <p><strong>Ready to see how much you could save?</strong></p>\n    \n    <a href=\"https://calendly.com/youragency/consultation\" class=\"cta-button\">Get Your Free Quote →</a>\n    \n    <p>Still have questions? Just reply to this email or call: <strong>(123) 456-7890</strong></p>\n    \n    <p>Talk soon!</p>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "touch-5-email",
+      "name": "Touch 5: Social Proof (Day 5)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1850, 250],
+      "notes": "Day 5 - Testimonials build credibility"
+    },
+    {
+      "parameters": {
+        "unit": "days",
+        "amount": 2
+      },
+      "id": "wait-day-7",
+      "name": "Wait 2 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2050, 400]
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@youragency.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.firstName }}, Should I Close Your File?",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.8; color: #333; }\n    .content { max-width: 600px; margin: 0 auto; padding: 40px 30px; }\n    .highlight { background: #fff3cd; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; }\n    .cta-button { background: #28a745; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }\n    .remove-link { color: #dc3545; }\n  </style>\n</head>\n<body>\n  <div class=\"content\">\n    <h2>Hi {{ $json.firstName }},</h2>\n    \n    <p>I haven't heard back from you about your {{ $json.insuranceType }} coverage, so I wanted to reach out one last time.</p>\n    \n    <div class=\"highlight\">\n      <strong>I'm about to close your file, but wanted to check first:</strong><br><br>\n      \n      Are you still interested in:<br>\n      ✓ Comparing rates from 20+ insurance carriers?<br>\n      ✓ Potentially saving hundreds per year on coverage?<br>\n      ✓ Getting personalized recommendations for your situation?\n    </div>\n    \n    <p><strong>If YES:</strong> Click below and I'll personally help you find the best coverage at the best price.</p>\n    \n    <a href=\"https://calendly.com/youragency/consultation\" class=\"cta-button\">Yes, I Still Need Help →</a>\n    \n    <p><strong>If NO:</strong> No worries at all! <a href=\"{{ $json.unsubscribeUrl }}\" class=\"remove-link\">Click here to remove yourself from my follow-up list</a>.</p>\n    \n    <p>Either way, I appreciate you considering us!</p>\n    \n    <p>Best wishes,<br>\n    <strong>[Your Name]</strong><br>\n    [Your Agency]<br>\n    (123) 456-7890</p>\n    \n    <p style=\"font-size: 12px; color: #666; margin-top: 30px;\"><em>P.S. - If your situation has changed and you need coverage now, call me directly at (123) 456-7890. I'm here to help!</em></p>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "touch-6-breakup",
+      "name": "Touch 6: Breakup Email (Day 7)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2250, 250],
+      "notes": "Day 7 - Final attempt, often most effective"
+    },
+    {
+      "parameters": {
+        "fromNumber": "+1234567890",
+        "toNumber": "={{ $json.phone }}",
+        "message": "=Hi {{ $json.firstName }}, last message from me! I'm closing your {{ $json.insuranceType }} inquiry file today. If you still want to compare rates and save money, reply QUOTE. Otherwise, I'll stop bothering you 😊 Thanks! -(123) 456-7890",
+        "options": {}
+      },
+      "id": "touch-6-sms",
+      "name": "Touch 6: Final SMS (Day 7)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [2250, 400],
+      "notes": "Day 7 - Friendly final SMS"
+    },
+    {
+      "parameters": {
+        "unit": "days",
+        "amount": 7
+      },
+      "id": "wait-final",
+      "name": "Wait 7 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2450, 400],
+      "notes": "Final waiting period"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mark-completed",
+              "name": "sequenceCompleted",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "completion-date",
+              "name": "completedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "final-status",
+              "name": "finalStatus",
+              "value": "sequence_completed_no_response",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "mark-sequence-complete",
+      "name": "Mark Sequence Complete",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [2650, 400],
+      "notes": "Marks sequence as finished"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLeads",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Follow-up Status": "Sequence Completed",
+            "Last Touch Date": "={{ $now.toISO() }}",
+            "Total Touches": 7,
+            "Next Action": "Move to long-term nurture or archive"
+          }
+        },
+        "options": {
+          "bulkSize": 10
+        }
+      },
+      "id": "update-crm-final",
+      "name": "Update CRM - Final",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [2850, 400],
+      "notes": "Updates CRM with final sequence status"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLeads",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Follow-up Status": "In Progress",
+            "Last Touch Date": "={{ $now.toISO() }}",
+            "Total Touches": "={{ $json.touchCount + 1 }}",
+            "Last Touch Type": "={{ $parameter.operation }}"
+          }
+        }
+      },
+      "id": "update-crm-touch",
+      "name": "Update CRM After Each Touch",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [650, 550],
+      "notes": "Tracks each touchpoint in CRM"
+    },
+    {
+      "parameters": {
+        "mode": "webhook",
+        "path": "lead-response",
+        "options": {}
+      },
+      "id": "response-webhook",
+      "name": "Lead Response Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 700],
+      "webhookId": "lead-response-check",
+      "notes": "Triggered when lead responds via SMS/email/form"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stop follow-up sequence when lead responds\nconst leadId = $input.first().json.leadId;\nconst responseType = $input.first().json.responseType; // 'sms', 'email', 'call', 'booking'\n\nreturn {\n  json: {\n    leadId: leadId,\n    respondedAt: new Date().toISO(),\n    responseType: responseType,\n    stopSequence: true,\n    nextAction: 'agent_follow_up',\n    priority: 'immediate'\n  }\n};"
+      },
+      "id": "process-response",
+      "name": "Process Lead Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 700],
+      "notes": "Stops sequence when lead responds"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "appYourAirtableBase",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblLeads",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Follow-up Status": "Lead Responded",
+            "Responded At": "={{ $json.respondedAt }}",
+            "Response Type": "={{ $json.responseType }}",
+            "Sequence Active": false,
+            "Next Action": "Agent follow-up required - URGENT",
+            "Priority": "HIGH"
+          }
+        }
+      },
+      "id": "mark-responded",
+      "name": "Mark Lead as Responded",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [650, 700],
+      "notes": "Updates CRM when lead responds"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "admin@youragency.com",
+          "mode": "list"
+        },
+        "subject": "🎉 LEAD RESPONDED - {{ $json.firstName }} {{ $json.lastName }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif;\">\n  <div style=\"background: #28a745; color: white; padding: 30px; text-align: center;\">\n    <h1>🎉 Lead Responded!</h1>\n  </div>\n  <div style=\"padding: 30px;\">\n    <p><strong>{{ $json.firstName }} {{ $json.lastName }}</strong> has responded to your follow-up sequence!</p>\n    <p><strong>Response Type:</strong> {{ $json.responseType }}</p>\n    <p><strong>Phone:</strong> {{ $json.phone }}</p>\n    <p><strong>Email:</strong> {{ $json.email }}</p>\n    <p><strong>Insurance Type:</strong> {{ $json.insuranceType }}</p>\n    <p style=\"background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107;\">\n      ⚡ <strong>ACTION REQUIRED:</strong> Follow up with this lead immediately for best conversion rate!\n    </p>\n    <a href=\"https://airtable.com/{{ $json.leadId }}\" style=\"background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0;\">View in CRM →</a>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "notify-agent-response",
+      "name": "Notify Agent - Lead Responded",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [850, 700],
+      "notes": "Alerts team immediately when lead responds"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger: New Lead": {
+      "main": [
+        [
+          {
+            "node": "Initialize Sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Sequence": {
+      "main": [
+        [
+          {
+            "node": "Touch 1: Welcome Email (Immediate)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Touch 1: Intro SMS (Immediate)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch 1: Intro SMS (Immediate)": {
+      "main": [
+        [
+          {
+            "node": "Update CRM After Each Touch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait 24 Hours",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 24 Hours": {
+      "main": [
+        [
+          {
+            "node": "Touch 2: Value Prop Email (Day 1)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Touch 2: Follow-up SMS (Day 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch 2: Follow-up SMS (Day 1)": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Days": {
+      "main": [
+        [
+          {
+            "node": "Touch 3: Education Email (Day 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch 3: Education Email (Day 3)": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Days": {
+      "main": [
+        [
+          {
+            "node": "Touch 4: Scarcity SMS (Day 5)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Touch 5: Social Proof (Day 5)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch 4: Scarcity SMS (Day 5)": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Days": {
+      "main": [
+        [
+          {
+            "node": "Touch 6: Breakup Email (Day 7)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Touch 6: Final SMS (Day 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Touch 6: Final SMS (Day 7)": {
+      "main": [
+        [
+          {
+            "node": "Wait 7 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 7 Days": {
+      "main": [
+        [
+          {
+            "node": "Mark Sequence Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Sequence Complete": {
+      "main": [
+        [
+          {
+            "node": "Update CRM - Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Response Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Lead Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Lead Response": {
+      "main": [
+        [
+          {
+            "node": "Mark Lead as Responded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Lead as Responded": {
+      "main": [
+        [
+          {
+            "node": "Notify Agent - Lead Responded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "insurance-automation-system"
+  },
+  "id": "follow-up-machine",
+  "tags": [
+    {
+      "name": "insurance",
+      "id": "1"
+    },
+    {
+      "name": "follow-up",
+      "id": "2"
+    },
+    {
+      "name": "nurture",
+      "id": "3"
+    }
+  ]
+}
