@@ -6,6 +6,20 @@ Transform your insurance agency with 6 production-ready automation workflows tha
 
 ---
 
+## ⚠️ **IMPORTANT: Read This First!**
+
+**Before setting up, please read:**
+- 📘 **[n8n Compatibility Updates](docs/n8n-compatibility-updates.md)** - Critical info about Airtable API changes
+- ⚡ **[Quick Reference Card](docs/QUICK-REFERENCE.md)** - Print this for easy setup
+
+**Key Updates (November 2025):**
+- ✅ Airtable now requires Personal Access Tokens (API keys deprecated Feb 2024)
+- ✅ Gmail OAuth2 recommended for production
+- ✅ Enhanced webhook security features
+- ✅ Compatible with n8n v1.103.0+
+
+---
+
 ## 📊 **ROI at a Glance**
 
 | Automation | Time Saved | Revenue Impact | Implementation |
@@ -166,8 +180,8 @@ Sample Airtable base structure is in `docs/airtable-setup.md`
 
 ### Required Environment Variables
 ```env
-# Airtable Configuration
-AIRTABLE_API_KEY=your_airtable_api_key
+# Airtable Configuration (Use Personal Access Token - API keys deprecated)
+AIRTABLE_PERSONAL_TOKEN=your_personal_access_token
 AIRTABLE_BASE_ID=your_base_id
 
 # Twilio Configuration
@@ -250,7 +264,7 @@ The dashboard shows:
 - **Solution:** Set up SPF, DKIM, and DMARC records for your domain
 
 **Problem:** Airtable connection errors
-- **Solution:** Check API key permissions and base ID
+- **Solution:** Check Personal Access Token permissions and base ID (Note: API keys deprecated Feb 2024)
 
 **Problem:** Chatbot not responding
 - **Solution:** Verify webhook endpoint and check n8n logs
@@ -259,12 +273,16 @@ The dashboard shows:
 
 ## 📚 **Documentation**
 
-- [Complete Setup Guide](docs/setup-guide.md)
-- [Configuration Guide](docs/configuration-guide.md)
-- [Airtable Structure](docs/airtable-setup.md)
-- [Integration Guide](docs/integrations.md)
-- [FAQ](docs/faq.md)
-- [Workflow Diagrams](docs/workflow-diagrams.md)
+**Essential Reading:**
+- ⚡ [Quick Reference Card](docs/QUICK-REFERENCE.md) - **Print this!** One-page cheat sheet
+- 🚀 [Quick Start Guide](docs/quick-start.md) - 30-minute setup walkthrough
+- 🔧 [Configuration Guide](docs/configuration-guide.md) - Complete customization guide
+- ⚙️ [n8n Compatibility Updates](docs/n8n-compatibility-updates.md) - **Important!** Latest version changes
+
+**Additional Resources:**
+- [Airtable Structure](docs/airtable-setup.md) - Database schema (coming soon)
+- [Integration Guide](docs/integrations.md) - Connect other tools (coming soon)
+- [FAQ](docs/faq.md) - Common questions (coming soon)
 
 ---
 
