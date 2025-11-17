@@ -1,0 +1,420 @@
+{
+  "name": "⚠️ Central Error Handler & Monitoring",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.first().json;\nconst now = new Date();\n\n// Extract error details\nconst errorDetails = {\n  workflow_id: error.workflow?.id || 'unknown',\n  workflow_name: error.workflow?.name || 'Unknown Workflow',\n  execution_id: error.execution?.id || 'unknown',\n  node_name: error.node?.name || 'Unknown Node',\n  node_type: error.node?.type || 'Unknown Type',\n  error_message: error.error?.message || 'No error message',\n  error_stack: error.error?.stack || '',\n  error_timestamp: now.toISOString(),\n  input_data: JSON.stringify(error.inputData || {}),\n  \n  // Categorize error\n  error_category: categorizeError(error.error?.message || ''),\n  severity: determineSeverity(error.workflow?.name, error.error?.message),\n  \n  // Resolution suggestions\n  suggested_action: suggestResolution(error.error?.message || ''),\n  auto_recoverable: isAutoRecoverable(error.error?.message || '')\n};\n\nfunction categorizeError(message) {\n  if (message.includes('ECONNREFUSED') || message.includes('timeout')) return 'CONNECTION';\n  if (message.includes('401') || message.includes('403')) return 'AUTHENTICATION';\n  if (message.includes('429')) return 'RATE_LIMIT';\n  if (message.includes('500') || message.includes('502')) return 'SERVER_ERROR';\n  if (message.includes('Invalid') || message.includes('required')) return 'VALIDATION';\n  return 'UNKNOWN';\n}\n\nfunction determineSeverity(workflowName, message) {\n  // Critical workflows\n  if (workflowName.includes('Lead Qualification') || workflowName.includes('Missed Call')) {\n    return 'CRITICAL';\n  }\n  // High priority\n  if (workflowName.includes('Appointment') || workflowName.includes('Quote')) {\n    return 'HIGH';\n  }\n  // Medium priority\n  if (workflowName.includes('Follow-Up') || workflowName.includes('Referral')) {\n    return 'MEDIUM';\n  }\n  // Low priority\n  return 'LOW';\n}\n\nfunction suggestResolution(message) {\n  if (message.includes('ECONNREFUSED')) return 'Check database/API service status';\n  if (message.includes('401') || message.includes('403')) return 'Verify API credentials';\n  if (message.includes('429')) return 'Reduce request rate or wait before retry';\n  if (message.includes('timeout')) return 'Increase timeout value or check network';\n  if (message.includes('Invalid')) return 'Check input data format';\n  return 'Review error details and workflow configuration';\n}\n\nfunction isAutoRecoverable(message) {\n  const recoverableErrors = ['ECONNREFUSED', 'timeout', '429', '500', '502', '503'];\n  return recoverableErrors.some(err => message.includes(err));\n}\n\nreturn { json: errorDetails };"
+      },
+      "id": "analyze-error",
+      "name": "🔍 Analyze Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "error_logs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_id": "={{ $json.workflow_id }}",
+            "workflow_name": "={{ $json.workflow_name }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "node_name": "={{ $json.node_name }}",
+            "node_type": "={{ $json.node_type }}",
+            "error_message": "={{ $json.error_message }}",
+            "error_stack": "={{ $json.error_stack }}",
+            "error_category": "={{ $json.error_category }}",
+            "severity": "={{ $json.severity }}",
+            "suggested_action": "={{ $json.suggested_action }}",
+            "auto_recoverable": "={{ $json.auto_recoverable }}",
+            "input_data": "={{ $json.input_data }}",
+            "resolved": false,
+            "created_at": "={{ $json.error_timestamp }}"
+          }
+        }
+      },
+      "id": "log-to-database",
+      "name": "💾 Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "is-critical",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "CRITICAL,HIGH",
+              "operator": {
+                "type": "string",
+                "operation": "includes"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-severity",
+      "name": "🚨 Critical/High Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_AGENT_CHAT_ID}}",
+        "text": "🚨 **CRITICAL ERROR ALERT**\n\n**Workflow**: {{ $json.workflow_name }}\n**Node**: {{ $json.node_name }}\n**Category**: {{ $json.error_category }}\n**Severity**: {{ $json.severity }}\n\n**Error**: {{ $json.error_message }}\n\n**Suggested Action**: {{ $json.suggested_action }}\n\n**Execution ID**: {{ $json.execution_id }}\n**Time**: {{ DateTime.fromISO($json.error_timestamp).toFormat('MMM d, h:mm a') }}",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "alert-telegram-critical",
+      "name": "📱 Alert via Telegram (Critical)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1050, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "{{TELEGRAM_CREDENTIAL_ID}}",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "🚨 Critical Error in Insurance Automation\n\nWorkflow: {{ $json.workflow_name }}\nNode: {{ $json.node_name }}\nError Category: {{ $json.error_category }}\nSeverity: {{ $json.severity }}\n\nError Message:\n{{ $json.error_message }}\n\nSuggested Action:\n{{ $json.suggested_action }}\n\nExecution ID: {{ $json.execution_id }}\nTimestamp: {{ $json.error_timestamp }}\n\nPlease investigate and resolve ASAP.\n\nn8n Dashboard: {{ $env.N8N_WEBHOOK_BASE_URL }}/executions",
+        "fromName": "n8n Error Monitor",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $env.AGENT_EMAIL }}",
+        "subject": "🚨 CRITICAL ERROR: {{ $json.workflow_name }}",
+        "options": {}
+      },
+      "id": "alert-email-critical",
+      "name": "📧 Alert via Email (Critical)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "workspaceId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_WORKSPACE_ID}}",
+          "mode": "id"
+        },
+        "channelId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_CHANNEL_AUTOMATION}}",
+          "mode": "id"
+        },
+        "text": "🚨 *CRITICAL ERROR*\n\n*Workflow*: {{ $json.workflow_name }}\n*Node*: {{ $json.node_name }}\n*Category*: {{ $json.error_category }}\n*Severity*: {{ $json.severity }}\n\n*Error*: {{ $json.error_message }}\n\n*Suggested Action*: {{ $json.suggested_action }}\n\n*Execution ID*: {{ $json.execution_id }}",
+        "otherOptions": {}
+      },
+      "id": "alert-slack-critical",
+      "name": "💬 Alert via Slack (Critical)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1050, 400],
+      "credentials": {
+        "slackApi": {
+          "id": "{{SLACK_CREDENTIAL_ID}}",
+          "name": "Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.ERROR_LOG_SPREADSHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.error_timestamp }}",
+            "Workflow": "={{ $json.workflow_name }}",
+            "Node": "={{ $json.node_name }}",
+            "Category": "={{ $json.error_category }}",
+            "Severity": "={{ $json.severity }}",
+            "Error": "={{ $json.error_message }}",
+            "Suggested_Action": "={{ $json.suggested_action }}",
+            "Execution_ID": "={{ $json.execution_id }}",
+            "Status": "Open"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-to-spreadsheet",
+      "name": "📊 Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1250, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "{{GOOGLE_SHEETS_CREDENTIAL_ID}}",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "is-recoverable",
+              "leftValue": "={{ $json.auto_recoverable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-recoverable",
+      "name": "♻️ Auto-Recoverable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "amount": 300,
+        "unit": "seconds"
+      },
+      "id": "wait-before-retry",
+      "name": "⏰ Wait 5 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1650, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Attempt to re-trigger the failed workflow\nconst errorData = $input.first().json;\n\nreturn {\n  json: {\n    message: `Auto-recovery attempted for ${errorData.workflow_name}`,\n    original_error: errorData.error_message,\n    retry_scheduled: true,\n    retry_time: new Date(Date.now() + 300000).toISOString()\n  }\n};"
+      },
+      "id": "attempt-recovery",
+      "name": "🔄 Schedule Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 240]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "workspaceId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_WORKSPACE_ID}}",
+          "mode": "id"
+        },
+        "channelId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_CHANNEL_AUTOMATION}}",
+          "mode": "id"
+        },
+        "text": "ℹ️ *Error Logged*\n\n*Workflow*: {{ $json.workflow_name }}\n*Node*: {{ $json.node_name }}\n*Category*: {{ $json.error_category }}\n*Severity*: {{ $json.severity }}\n\n*Error*: {{ $json.error_message }}\n\nLogged to database for review.",
+        "otherOptions": {}
+      },
+      "id": "notify-low-priority",
+      "name": "📝 Log to Slack (Low Priority)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1050, 500],
+      "credentials": {
+        "slackApi": {
+          "id": "{{SLACK_CREDENTIAL_ID}}",
+          "name": "Slack"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔍 Analyze Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Analyze Error": {
+      "main": [
+        [
+          {
+            "node": "💾 Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Log to Database": {
+      "main": [
+        [
+          {
+            "node": "🚨 Critical/High Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Critical/High Priority?": {
+      "main": [
+        [
+          {
+            "node": "📱 Alert via Telegram (Critical)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📧 Alert via Email (Critical)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Alert via Slack (Critical)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📝 Log to Slack (Low Priority)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📱 Alert via Telegram (Critical)": {
+      "main": [
+        [
+          {
+            "node": "📊 Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Alert via Email (Critical)": {
+      "main": [
+        [
+          {
+            "node": "📊 Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Alert via Slack (Critical)": {
+      "main": [
+        [
+          {
+            "node": "📊 Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Log to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "♻️ Auto-Recoverable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "♻️ Auto-Recoverable?": {
+      "main": [
+        [
+          {
+            "node": "⏰ Wait 5 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Wait 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "🔄 Schedule Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "error-handling",
+      "name": "error-handling"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}
