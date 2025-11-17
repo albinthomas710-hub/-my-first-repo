@@ -1,0 +1,386 @@
+{
+  "name": "📞 Missed Call & Text-Back Recovery System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "call/missed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-missed-call",
+      "name": "📞 Missed Call (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "missed-call"
+    },
+    {
+      "parameters": {
+        "jsCode": "const call = $input.first().json;\nconst now = new Date();\nconst callTime = new Date(call.call_time || now);\nconst hour = callTime.getHours();\n\n// Determine if it's business hours\nconst isBusinessHours = hour >= 9 && hour < 18 && callTime.getDay() >= 1 && callTime.getDay() <= 5;\n\n// Check if this is a known lead/client\nconst isKnownContact = call.lead_id || call.client_id;\n\nreturn {\n  json: {\n    phone: call.from_number,\n    call_time: call.call_time || now.toISOString(),\n    duration: call.duration || 0,\n    lead_id: call.lead_id || null,\n    client_id: call.client_id || null,\n    is_business_hours: isBusinessHours,\n    is_known_contact: isKnownContact,\n    caller_name: call.caller_name || 'there',\n    urgency: isBusinessHours && !isKnownContact ? 'high' : 'medium'\n  }\n};"
+      },
+      "id": "analyze-call",
+      "name": "🔍 Analyze Missed Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "missed_calls",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "phone_number": "={{ $json.phone }}",
+            "call_time": "={{ $json.call_time }}",
+            "lead_id": "={{ $json.lead_id }}",
+            "client_id": "={{ $json.client_id }}",
+            "is_known_contact": "={{ $json.is_known_contact }}",
+            "urgency": "={{ $json.urgency }}",
+            "recovery_sent": false,
+            "created_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "log-missed-call",
+      "name": "💾 Log Missed Call",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "is-known",
+              "leftValue": "={{ $json.is_known_contact }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-by-contact-type",
+      "name": "🔀 Known Contact?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  l.id,\n  l.first_name,\n  l.last_name,\n  l.email,\n  l.phone,\n  l.qualification_tier,\n  l.qualification_score,\n  l.coverage_type,\n  l.status\nFROM leads l\nWHERE l.id = {{ $json.lead_id }}\n\nUNION\n\nSELECT \n  c.id,\n  c.first_name,\n  c.last_name,\n  c.email,\n  c.phone,\n  'CLIENT' as qualification_tier,\n  100 as qualification_score,\n  c.coverage_type,\n  'active_client' as status\nFROM clients c\nWHERE c.id = {{ $json.client_id }}\n\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "get-contact-details",
+      "name": "📋 Get Contact Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 220],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Create a personalized, warm text message response to a missed call.\n\n**Guidelines:**\n- Acknowledge you missed their call\n- Show you care\n- Offer immediate callback or provide info\n- Make it easy to respond\n- Tailor to whether they're a lead (inquiry) vs client (service)\n\nProvide response in JSON:\n{\n  \"sms_message\": \"the text message\",\n  \"email_subject\": \"email subject if needed\",\n  \"email_body\": \"email body if needed\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Create missed call response for:\n\nName: {{ $json.first_name }} {{ $json.last_name }}\nStatus: {{ $json.status }}\nType: {{ $json.qualification_tier }}\nCoverage Interest: {{ $json.coverage_type }}\n\nAgent: {{ $env.AGENT_NAME }}\nPhone: {{ $env.AGENT_PHONE }}\nBooking: {{ $env.CALENDAR_BOOKING_LINK }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 300
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-known-response",
+      "name": "✍️ Generate Personalized Response",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [1250, 220],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const contact = $input.first().json;\nconst aiResponse = $input.last().json;\n\nlet response;\ntry {\n  const content = aiResponse.choices[0].message.content;\n  response = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  response = {\n    sms_message: `Hi ${contact.first_name}! Sorry I missed your call. I'm available now if you want to call back at ${process.env.AGENT_PHONE}, or I can call you in the next 30 min. What works better? - ${process.env.AGENT_NAME}`,\n    email_subject: 'Sorry I missed your call!',\n    email_body: `Hi ${contact.first_name},\\n\\nI just saw I missed your call - so sorry about that!\\n\\nI'm available now if you want to call me back at ${process.env.AGENT_PHONE}.\\n\\nOr I can call you back in the next 30 minutes.\\n\\nOr book a time that works for you: ${process.env.CALENDAR_BOOKING_LINK}\\n\\nTalk soon!\\n${process.env.AGENT_NAME}`\n  };\n}\n\nreturn {\n  json: {\n    ...contact,\n    response_message: response\n  }\n};"
+      },
+      "id": "parse-known-response",
+      "name": "📝 Parse Response (Known)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 220]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.response_message.sms_message }}"
+      },
+      "id": "send-known-sms",
+      "name": "💬 Send SMS (Known Contact)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1650, 220],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "Hi! Thanks for calling {{ $env.AGENCY_NAME }}. Sorry I missed you! 😊 Are you looking for insurance quotes? I'm {{ $env.AGENT_NAME }} and I'd love to help. I can call you back in 10 min or you can book here: {{ $env.CALENDAR_BOOKING_LINK }}"
+      },
+      "id": "send-unknown-sms",
+      "name": "💬 Send SMS (Unknown Contact)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1050, 380],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE missed_calls\nSET \n  recovery_sent = true,\n  recovery_sent_at = NOW(),\n  updated_at = NOW()\nWHERE phone_number = '{{ $json.phone }}'\n  AND call_time = '{{ $json.call_time }}';",
+        "options": {}
+      },
+      "id": "mark-recovery-sent",
+      "name": "✅ Mark Recovery Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_AGENT_CHAT_ID}}",
+        "text": "📞 **MISSED CALL**\n\nFrom: {{ $json.phone }}\nTime: {{ DateTime.fromISO($json.call_time).toFormat('h:mm a') }}\nContact Type: {{ $json.is_known_contact ? 'KNOWN' : 'NEW' }}\n{{ $json.is_known_contact ? 'Name: ' + $json.first_name + ' ' + $json.last_name : '' }}\n\nAuto-response sent.\n{{ $json.urgency === 'high' ? '⚠️ HIGH PRIORITY - Call back ASAP!' : '✓ Recovery message sent' }}",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "notify-agent",
+      "name": "📢 Notify Agent",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2050, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "{{TELEGRAM_CREDENTIAL_ID}}",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Missed call processed and recovery sent\",\n  \"urgency\": $json.urgency\n} }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "✅ Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2250, 300]
+    }
+  ],
+  "connections": {
+    "📞 Missed Call (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "🔍 Analyze Missed Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Analyze Missed Call": {
+      "main": [
+        [
+          {
+            "node": "💾 Log Missed Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Log Missed Call": {
+      "main": [
+        [
+          {
+            "node": "🔀 Known Contact?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Known Contact?": {
+      "main": [
+        [
+          {
+            "node": "📋 Get Contact Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Send SMS (Unknown Contact)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Get Contact Details": {
+      "main": [
+        [
+          {
+            "node": "✍️ Generate Personalized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✍️ Generate Personalized Response": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse Response (Known)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse Response (Known)": {
+      "main": [
+        [
+          {
+            "node": "💬 Send SMS (Known Contact)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send SMS (Known Contact)": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Recovery Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send SMS (Unknown Contact)": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Recovery Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Mark Recovery Sent": {
+      "main": [
+        [
+          {
+            "node": "📢 Notify Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📢 Notify Agent": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

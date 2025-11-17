@@ -1,0 +1,419 @@
+{
+  "name": "💰 AI Quote Generator & Auto-Sender",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quote/generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-quote-request",
+      "name": "📝 Quote Request (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "quote-request"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  l.*,\n  COALESCE(c.id, 0) as existing_client_id\nFROM leads l\nLEFT JOIN clients c ON l.email = c.email\nWHERE l.id = {{ $json.lead_id }}\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "get-lead-data",
+      "name": "📋 Get Lead Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4o"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert insurance underwriter and quote generator.\n\n**Your Job:**\n1. Analyze the lead's profile\n2. Generate realistic quote estimates based on industry standards\n3. Recommend appropriate coverage levels\n4. Identify upsell opportunities\n5. Explain benefits in simple language\n\n**Coverage Types & Typical Ranges:**\n\n**Term Life Insurance:**\n- 20-year term, $500k coverage: $25-75/month (varies by age/health)\n- 30-year term, $1M coverage: $50-150/month\n\n**Whole Life Insurance:**\n- $250k coverage: $200-400/month\n- $500k coverage: $350-700/month\n\n**Health Insurance:**\n- Individual: $300-600/month\n- Family: $1,000-2,000/month\n\n**Disability Insurance:**\n- $3,000/month benefit: $80-150/month\n- $5,000/month benefit: $120-250/month\n\n**Adjust based on:**\n- Age (younger = cheaper for term, older = more expensive)\n- Health conditions\n- Smoking status\n- Income level\n- State/location\n\nProvide response in JSON:\n{\n  \"primary_quote\": {\n    \"coverage_type\": \"type\",\n    \"coverage_amount\": \"$XXX,XXX\",\n    \"monthly_premium\": \"$XXX\",\n    \"annual_premium\": \"$X,XXX\",\n    \"key_benefits\": [\"benefit1\", \"benefit2\", \"benefit3\"]\n  },\n  \"recommended_upgrades\": [\n    {\n      \"option\": \"upgrade name\",\n      \"additional_cost\": \"$XX/month\",\n      \"benefit\": \"why they should consider it\"\n    }\n  ],\n  \"total_annual_value\": \"$X,XXX\",\n  \"comparison_to_competitors\": \"How this stacks up\",\n  \"next_steps\": \"What they should do next\",\n  \"personalized_message\": \"Personal note based on their situation\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Generate insurance quote for:\n\nName: {{ $json.first_name }} {{ $json.last_name }}\nAge: {{ $json.age }}\nIncome: {{ $json.income }}\nCoverage Type: {{ $json.coverage_type }}\nCoverage Amount Requested: {{ $json.coverage_amount || 'Not specified' }}\nSmoker: {{ $json.smoker || 'No' }}\nHealth Status: {{ $json.health_status || 'Good' }}\nEmployment: {{ $json.employment_status || 'Employed' }}\nFamily Status: {{ $json.marital_status || 'Single' }}, {{ $json.dependents || 0 }} dependents\nExisting Coverage: {{ $json.has_existing_coverage || 'None' }}\n\nAgent: {{ $env.AGENT_NAME }}\nAgency: {{ $env.AGENCY_NAME }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 1200
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-quote-ai",
+      "name": "🤖 AI Quote Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\nconst aiQuote = $input.last().json;\n\nlet quote;\ntry {\n  const content = aiQuote.choices[0].message.content;\n  quote = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  // Fallback quote\n  quote = {\n    primary_quote: {\n      coverage_type: lead.coverage_type,\n      coverage_amount: '$500,000',\n      monthly_premium: '$75',\n      annual_premium: '$900',\n      key_benefits: ['Financial protection for family', 'Fixed premiums', 'Convertible option']\n    },\n    recommended_upgrades: [],\n    total_annual_value: '$900',\n    comparison_to_competitors: 'Competitive rates',\n    next_steps: 'Schedule a call to finalize',\n    personalized_message: 'Great coverage for your situation'\n  };\n}\n\nconst quoteId = `Q-${Date.now()}-${lead.id}`;\n\nreturn {\n  json: {\n    quote_id: quoteId,\n    lead_id: lead.id,\n    lead_name: `${lead.first_name} ${lead.last_name}`,\n    lead_email: lead.email,\n    lead_phone: lead.phone,\n    quote_data: quote,\n    generated_at: new Date().toISOString(),\n    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days\n  }\n};"
+      },
+      "id": "process-quote",
+      "name": "⚙️ Process Quote Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "quotes",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "quote_id": "={{ $json.quote_id }}",
+            "lead_id": "={{ $json.lead_id }}",
+            "coverage_type": "={{ $json.quote_data.primary_quote.coverage_type }}",
+            "coverage_amount": "={{ $json.quote_data.primary_quote.coverage_amount }}",
+            "monthly_premium": "={{ $json.quote_data.primary_quote.monthly_premium }}",
+            "annual_premium": "={{ $json.quote_data.primary_quote.annual_premium }}",
+            "quote_data_json": "={{ JSON.stringify($json.quote_data) }}",
+            "status": "sent",
+            "generated_at": "={{ $json.generated_at }}",
+            "expires_at": "={{ $json.expires_at }}",
+            "created_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "save-quote",
+      "name": "💾 Save Quote to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Create a compelling, personalized email to present an insurance quote.\n\n**Email should:**\n- Lead with value and peace of mind\n- Present the quote clearly and simply\n- Create urgency (quote expiration)\n- Make next steps obvious (book a call)\n- Feel personal and consultative, not salesy\n\nProvide response in JSON:\n{\n  \"subject\": \"email subject\",\n  \"body\": \"email body in plain text format\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Create quote presentation email for:\n\nClient: {{ $json.lead_name }}\nQuote: {{ $json.quote_data.primary_quote.coverage_type }}\nCoverage: {{ $json.quote_data.primary_quote.coverage_amount }}\nMonthly: {{ $json.quote_data.primary_quote.monthly_premium }}\nBenefits: {{ JSON.stringify($json.quote_data.primary_quote.key_benefits) }}\nPersonal Note: {{ $json.quote_data.personalized_message }}\n\nAgent: {{ $env.AGENT_NAME }}\nPhone: {{ $env.AGENT_PHONE }}\nBooking: {{ $env.CALENDAR_BOOKING_LINK }}\n\nExpires: {{ DateTime.fromISO($json.expires_at).toFormat('MMMM d, yyyy') }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 800
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-quote-email",
+      "name": "✍️ Generate Quote Email",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [1250, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const quoteInfo = $input.first().json;\nconst emailAI = $input.last().json;\n\nlet email;\ntry {\n  const content = emailAI.choices[0].message.content;\n  email = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  // Fallback\n  email = {\n    subject: `Your ${quoteInfo.quote_data.primary_quote.coverage_type} Quote - ${quoteInfo.quote_data.primary_quote.monthly_premium}/month`,\n    body: `Hi ${quoteInfo.lead_name.split(' ')[0]},\\n\\nHere's the quote you requested for ${quoteInfo.quote_data.primary_quote.coverage_type}.\\n\\nCoverage: ${quoteInfo.quote_data.primary_quote.coverage_amount}\\nMonthly Premium: ${quoteInfo.quote_data.primary_quote.monthly_premium}\\nAnnual Premium: ${quoteInfo.quote_data.primary_quote.annual_premium}\\n\\n${quoteInfo.quote_data.personalized_message}\\n\\nThis quote is valid until ${new Date(quoteInfo.expires_at).toLocaleDateString()}.\\n\\nLet's schedule a call to discuss: ${process.env.CALENDAR_BOOKING_LINK}\\n\\nBest regards,\\n${process.env.AGENT_NAME}\\n${process.env.AGENT_PHONE}`\n  };\n}\n\nreturn {\n  json: {\n    ...quoteInfo,\n    email_content: email\n  }\n};"
+      },
+      "id": "parse-email",
+      "name": "📝 Parse Email Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.email_content.body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.lead_email }}",
+        "subject": "={{ $json.email_content.subject }}",
+        "options": {
+          "attachments": "quotes/{{ $json.quote_id }}.pdf"
+        }
+      },
+      "id": "send-quote-email",
+      "name": "📧 Send Quote Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1650, 220],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.lead_phone }}",
+        "message": "Hi {{ $json.lead_name.split(' ')[0] }}! 📋 Your {{ $json.quote_data.primary_quote.coverage_type }} quote is ready: {{ $json.quote_data.primary_quote.monthly_premium }}/month for {{ $json.quote_data.primary_quote.coverage_amount }} coverage. Check your email! Questions? Call me: {{ $env.AGENT_PHONE }} - {{ $env.AGENT_NAME }}"
+      },
+      "id": "send-quote-sms",
+      "name": "💬 Send Quote Notification SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1650, 380],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leads\nSET \n  status = 'quote_sent',\n  last_quote_sent_at = NOW(),\n  updated_at = NOW()\nWHERE id = {{ $json.lead_id }};",
+        "options": {}
+      },
+      "id": "update-lead-status",
+      "name": "✅ Update Lead Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "workspaceId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_WORKSPACE_ID}}",
+          "mode": "id"
+        },
+        "channelId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_CHANNEL_SALES}}",
+          "mode": "id"
+        },
+        "text": "💰 **Quote Sent**\\n\\nLead: {{ $json.lead_name }}\\nCoverage: {{ $json.quote_data.primary_quote.coverage_type }}\\nPremium: {{ $json.quote_data.primary_quote.monthly_premium }}/month\\nQuote ID: {{ $json.quote_id }}\\n\\nExpires: {{ DateTime.fromISO($json.expires_at).toFormat('MMM d') }}"
+      },
+      "id": "notify-team",
+      "name": "📢 Notify Sales Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [2050, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "{{SLACK_CREDENTIAL_ID}}",
+          "name": "Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"quote_id\": $json.quote_id,\n  \"quote_sent_to\": $json.lead_email,\n  \"monthly_premium\": $json.quote_data.primary_quote.monthly_premium,\n  \"expires_at\": $json.expires_at\n} }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "✅ Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2250, 300]
+    }
+  ],
+  "connections": {
+    "📝 Quote Request (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "📋 Get Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Get Lead Data": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Quote Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI Quote Generator": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process Quote Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process Quote Data": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Quote to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Quote to Database": {
+      "main": [
+        [
+          {
+            "node": "✍️ Generate Quote Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✍️ Generate Quote Email": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse Email Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse Email Content": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Quote Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Send Quote Notification SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Quote Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Quote Notification SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "📢 Notify Sales Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📢 Notify Sales Team": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "quotes",
+      "name": "quotes"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

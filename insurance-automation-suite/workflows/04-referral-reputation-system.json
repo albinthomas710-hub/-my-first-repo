@@ -1,0 +1,807 @@
+{
+  "name": "🏆 Referral & Reputation Automation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "deal/closed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-deal-closed",
+      "name": "✅ Deal Closed (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "deal-closed"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  c.*,\n  l.first_name,\n  l.last_name,\n  l.email,\n  l.phone,\n  l.qualification_score,\n  l.coverage_type\nFROM clients c\nLEFT JOIN leads l ON c.lead_id = l.id\nWHERE c.id = {{ $json.client_id }}\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "get-client-details",
+      "name": "📋 Get Client Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const client = $input.first().json;\nconst now = new Date();\n\n// Calculate optimal timing for referral request\n// Best time: 3-7 days after policy issued (when excitement is still high)\nconst requestDate = new Date(now);\nrequestDate.setDate(requestDate.getDate() + 5); // 5 days delay\n\n// Review request timing: immediately after positive interaction\nconst reviewRequestDate = new Date(now);\nreviewRequestDate.setHours(reviewRequestDate.getHours() + 2); // 2 hours delay\n\nreturn {\n  json: {\n    ...client,\n    referral_request_scheduled_for: requestDate.toISOString(),\n    review_request_scheduled_for: reviewRequestDate.toISOString(),\n    first_name: client.first_name,\n    policy_value: client.annual_premium || 0,\n    is_high_value: (client.annual_premium || 0) > 2000\n  }\n};"
+      },
+      "id": "calculate-timing",
+      "name": "⏰ Calculate Optimal Timing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "referral_campaigns",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "client_id": "={{ $json.id }}",
+            "review_request_scheduled_for": "={{ $json.review_request_scheduled_for }}",
+            "referral_request_scheduled_for": "={{ $json.referral_request_scheduled_for }}",
+            "review_request_sent": false,
+            "referral_request_sent": false,
+            "review_submitted": false,
+            "referrals_received": 0,
+            "created_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "schedule-campaign",
+      "name": "📅 Schedule Referral Campaign",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Referral campaign scheduled\",\n  \"review_request_at\": $json.review_request_scheduled_for,\n  \"referral_request_at\": $json.referral_request_scheduled_for\n} }}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "✅ Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10,15 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Check Scheduled Requests (10am, 3pm)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 700]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  rc.*,\n  c.first_name,\n  c.last_name,\n  c.email,\n  c.phone,\n  c.annual_premium,\n  c.policy_number,\n  c.coverage_type,\n  c.policy_start_date\nFROM referral_campaigns rc\nJOIN clients c ON rc.client_id = c.id\nWHERE \n  (\n    -- Review requests due\n    (rc.review_request_sent = false \n     AND rc.review_request_scheduled_for <= NOW())\n    \n    -- Referral requests due\n    OR (rc.referral_request_sent = false \n        AND rc.referral_request_scheduled_for <= NOW())\n  )\nORDER BY c.annual_premium DESC\nLIMIT 30;",
+        "options": {}
+      },
+      "id": "get-due-requests",
+      "name": "📊 Get Due Requests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 700],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-requests",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-has-requests",
+      "name": "❓ Any Requests Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 700]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split",
+              "name": "client",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "split-requests",
+      "name": "🔄 Split Into Individual Requests",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 640]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "review-due",
+              "leftValue": "={{ $json.review_request_sent }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-request-type",
+      "name": "🔀 Route by Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1050, 640]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert at crafting warm, authentic review and referral requests for insurance agents.\n\nCreate a personalized message that:\n- Feels genuine and appreciative, not transactional\n- Makes it EASY to leave a review (direct links, clear steps)\n- Uses social proof and reciprocity\n- Short and mobile-friendly\n\nProvide response in JSON:\n{\n  \"email_subject\": \"subject line\",\n  \"email_body\": \"email content with review links\",\n  \"sms_message\": \"SMS version\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Create a Google review request for:\n\nClient: {{ $json.first_name }} {{ $json.last_name }}\nCoverage: {{ $json.coverage_type }}\nPolicy Start: {{ $json.policy_start_date }}\n\nAgent: {{ $env.AGENT_NAME }}\nAgency: {{ $env.AGENCY_NAME }}\nGoogle Review Link: {{ $env.GOOGLE_REVIEW_LINK }}\n\nTone: Warm, grateful, make it feel like they're helping you grow your business to help more families."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 500
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-review-request",
+      "name": "✍️ AI Review Request Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [1250, 520],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const client = $input.first().json;\nconst aiResponse = $input.last().json;\n\nlet messages;\ntry {\n  const content = aiResponse.choices[0].message.content;\n  messages = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  // Fallback\n  messages = {\n    email_subject: `Quick favor? 🌟`,\n    email_body: `Hi ${client.first_name},\\n\\nI hope you're happy with your new ${client.coverage_type} coverage!\\n\\nIf you have 60 seconds, I'd be incredibly grateful if you could leave a quick Google review. It helps me help more families like yours get the protection they need.\\n\\nLeave a review here: ${process.env.GOOGLE_REVIEW_LINK}\\n\\nThank you so much!\\n\\n${process.env.AGENT_NAME}`,\n    sms_message: `Hi ${client.first_name}! Quick favor - if you're happy with your ${client.coverage_type} coverage, could you leave a Google review? Takes 30 sec: ${process.env.GOOGLE_REVIEW_LINK} Thanks! - ${process.env.AGENT_NAME}`\n  };\n}\n\nreturn {\n  json: {\n    ...client,\n    review_messages: messages\n  }\n};"
+      },
+      "id": "parse-review-message",
+      "name": "📝 Parse Review Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 520]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.review_messages.email_body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.review_messages.email_subject }}",
+        "options": {}
+      },
+      "id": "send-review-email",
+      "name": "📧 Send Review Request Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1650, 440],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.review_messages.sms_message }}"
+      },
+      "id": "send-review-sms",
+      "name": "💬 Send Review Request SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1650, 600],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE referral_campaigns\nSET \n  review_request_sent = true,\n  review_request_sent_at = NOW(),\n  updated_at = NOW()\nWHERE id = {{ $json.id }};",
+        "options": {}
+      },
+      "id": "mark-review-sent",
+      "name": "✅ Mark Review Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 520],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert at crafting referral requests that convert.\n\n**Key Principles:**\n- Make it specific and easy (\"who do you know who...\")\n- Offer value to the referred person (help THEM)\n- Use reciprocity (you helped them, they help you)\n- Make it feel good (helping friends/family get protected)\n- Provide incentive if applicable\n\nProvide response in JSON:\n{\n  \"email_subject\": \"subject line\",\n  \"email_body\": \"email content\",\n  \"sms_message\": \"SMS version\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Create a referral request for:\n\nClient: {{ $json.first_name }} {{ $json.last_name }}\nCoverage: {{ $json.coverage_type }}\nAnnual Premium: ${{ $json.annual_premium }}\n\nAgent: {{ $env.AGENT_NAME }}\nAgency: {{ $env.AGENCY_NAME }}\nReferral Incentive: {{ $env.REFERRAL_INCENTIVE || 'Gift card for each referral that becomes a client' }}\n\nAsk them specifically about:\n- Friends/family who recently had a baby\n- Friends who recently got married\n- Business partners or colleagues\n- Anyone who mentioned needing insurance"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 600
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-referral-request",
+      "name": "✍️ AI Referral Request Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [1250, 760],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const client = $input.first().json;\nconst aiResponse = $input.last().json;\n\nlet messages;\ntry {\n  const content = aiResponse.choices[0].message.content;\n  messages = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  // Fallback\n  messages = {\n    email_subject: `Know anyone who needs coverage?`,\n    email_body: `Hi ${client.first_name},\\n\\nI'm so glad I could help you get the right ${client.coverage_type} coverage!\\n\\nI have a quick question: Do you know anyone who might need help with their insurance?\\n\\nSpecifically, anyone who:\\n• Recently had a baby or got married\\n• Started a new business\\n• Mentioned they're worried about their current coverage\\n• Is paying too much for insurance\\n\\nI'd love to help them the same way I helped you. And as a thank-you, ${process.env.REFERRAL_INCENTIVE}.\\n\\nJust reply with their name and number (with their permission) or forward them my info!\\n\\nThanks so much!\\n${process.env.AGENT_NAME}\\n${process.env.AGENT_PHONE}`,\n    sms_message: `Hi ${client.first_name}! Know anyone who needs ${client.coverage_type} coverage? I'd love to help them like I helped you. ${process.env.REFERRAL_INCENTIVE}. Just send me their info! - ${process.env.AGENT_NAME}`\n  };\n}\n\nreturn {\n  json: {\n    ...client,\n    referral_messages: messages\n  }\n};"
+      },
+      "id": "parse-referral-message",
+      "name": "📝 Parse Referral Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 760]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.referral_messages.email_body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.referral_messages.email_subject }}",
+        "options": {}
+      },
+      "id": "send-referral-email",
+      "name": "📧 Send Referral Request Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1650, 680],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.referral_messages.sms_message }}"
+      },
+      "id": "send-referral-sms",
+      "name": "💬 Send Referral Request SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1650, 840],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE referral_campaigns\nSET \n  referral_request_sent = true,\n  referral_request_sent_at = NOW(),\n  updated_at = NOW()\nWHERE id = {{ $json.id }};",
+        "options": {}
+      },
+      "id": "mark-referral-sent",
+      "name": "✅ Mark Referral Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 760],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "referral/received",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-referral-received",
+      "name": "👥 Referral Received (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 1100],
+      "webhookId": "referral-received"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "referrals",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "referring_client_id": "={{ $json.referring_client_id }}",
+            "referred_name": "={{ $json.referred_name }}",
+            "referred_email": "={{ $json.referred_email }}",
+            "referred_phone": "={{ $json.referred_phone }}",
+            "referral_source": "={{ $json.source || 'direct' }}",
+            "status": "new",
+            "received_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "save-referral",
+      "name": "💾 Save Referral",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 1100],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Increment referral count for referring client\nUPDATE referral_campaigns\nSET \n  referrals_received = referrals_received + 1,\n  last_referral_at = NOW(),\n  updated_at = NOW()\nWHERE client_id = {{ $json.referring_client_id }};\n\n-- Get referring client details for thank you\nSELECT \n  c.first_name,\n  c.last_name,\n  c.email,\n  c.phone,\n  rc.referrals_received\nFROM clients c\nJOIN referral_campaigns rc ON c.id = rc.client_id\nWHERE c.id = {{ $json.referring_client_id }};",
+        "options": {}
+      },
+      "id": "update-referral-count",
+      "name": "📊 Update Referral Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [650, 1100],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "{{ $json.first_name }}, thank you SO much for the referral! 🙏 I just reached out to {{ $('💾 Save Referral').item.json.referred_name }}. {{ $env.REFERRAL_INCENTIVE }} coming your way! You're the best! - {{ $env.AGENT_NAME }}"
+      },
+      "id": "thank-referrer",
+      "name": "💬 Thank Referrer (SMS)",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [850, 1040],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_AGENT_CHAT_ID}}",
+        "text": "🎉 **NEW REFERRAL!**\n\nReferred by: {{ $json.first_name }} {{ $json.last_name }}\nReferral: {{ $('💾 Save Referral').item.json.referred_name }}\nPhone: {{ $('💾 Save Referral').item.json.referred_phone }}\nEmail: {{ $('💾 Save Referral').item.json.referred_email }}\n\nTotal referrals from this client: {{ $json.referrals_received }}\n\n⚡ HIGH PRIORITY - Reach out within 1 hour!\n\nNote: Referrals close at 60-70%!",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "alert-agent-referral",
+      "name": "🚨 Alert Agent - NEW REFERRAL",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [850, 1160],
+      "credentials": {
+        "telegramApi": {
+          "id": "{{TELEGRAM_CREDENTIAL_ID}}",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Referral received and processed\",\n  \"referral_id\": $('💾 Save Referral').item.json.id\n} }}",
+        "options": {}
+      },
+      "id": "respond-referral-success",
+      "name": "✅ Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 1100]
+    }
+  ],
+  "connections": {
+    "✅ Deal Closed (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "📋 Get Client Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Get Client Details": {
+      "main": [
+        [
+          {
+            "node": "⏰ Calculate Optimal Timing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Calculate Optimal Timing": {
+      "main": [
+        [
+          {
+            "node": "📅 Schedule Referral Campaign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📅 Schedule Referral Campaign": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Check Scheduled Requests (10am, 3pm)": {
+      "main": [
+        [
+          {
+            "node": "📊 Get Due Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Get Due Requests": {
+      "main": [
+        [
+          {
+            "node": "❓ Any Requests Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Any Requests Due?": {
+      "main": [
+        [
+          {
+            "node": "🔄 Split Into Individual Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Split Into Individual Requests": {
+      "main": [
+        [
+          {
+            "node": "🔀 Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Route by Type": {
+      "main": [
+        [
+          {
+            "node": "✍️ AI Review Request Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "✍️ AI Referral Request Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✍️ AI Review Request Generator": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse Review Request": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Review Request Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Send Review Request SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Review Request Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Review Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Review Request SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Review Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✍️ AI Referral Request Generator": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse Referral Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse Referral Request": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Referral Request Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Send Referral Request SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Referral Request Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Referral Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Referral Request SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Referral Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👥 Referral Received (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Referral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Referral": {
+      "main": [
+        [
+          {
+            "node": "📊 Update Referral Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Update Referral Count": {
+      "main": [
+        [
+          {
+            "node": "💬 Thank Referrer (SMS)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🚨 Alert Agent - NEW REFERRAL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Thank Referrer (SMS)": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Alert Agent - NEW REFERRAL": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "referrals",
+      "name": "referrals"
+    }
+  ],
+  "triggerCount": 3,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,97 @@
+{
+  "name": "🌱 Long-Term Lead Nurture Campaign",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 9 * * 1,4"}]
+        }
+      },
+      "id": "schedule-nurture",
+      "name": "⏰ Run Nurture (Mon & Thu 9am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.*, nc.last_nurture_sent_at, nc.nurture_sequence_step\nFROM leads l\nLEFT JOIN nurture_campaigns nc ON l.id = nc.lead_id\nWHERE l.status IN ('nurture', 'cold', 'unqualified_now')\n  AND l.unsubscribed = false\n  AND (nc.last_nurture_sent_at IS NULL OR nc.last_nurture_sent_at < NOW() - INTERVAL '7 days')\n  AND (nc.nurture_sequence_step IS NULL OR nc.nurture_sequence_step < 12)\nORDER BY l.qualification_score DESC NULLS LAST\nLIMIT 100;",
+        "options": {}
+      },
+      "id": "get-nurture-leads",
+      "name": "📊 Get Leads for Nurturing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}", "name": "PostgreSQL - CRM Database"}}
+    },
+    {
+      "parameters": {
+        "modelId": {"__rl": true, "value": "gpt-4o-mini", "mode": "list"},
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Create valuable, educational nurture content for insurance leads.\n\n**Nurture Sequence (12 emails over 6 months):**\n1. Educational: Coverage basics\n2. Value: Industry tips\n3. Social proof: Success story\n4. Educational: Common mistakes\n5. Value: Money-saving tips\n6. Soft ask: Still interested?\n7. Educational: Life changes requiring coverage\n8. Value: Free resource/checklist\n9. Social proof: Testimonial\n10. Educational: Industry news\n11. Value: Exclusive offer\n12. Final: Last chance to help\n\nProvide: {\"subject\": \"...\", \"body\": \"...\", \"cta\": \"...\"}"
+            },
+            {"role": "user", "content": "Create email #{{ $json.nurture_sequence_step || 1 }} for:\nName: {{ $json.first_name }}\nCoverage Interest: {{ $json.coverage_type }}\nAgent: {{ $env.AGENT_NAME }}"}
+          ]
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-nurture-content",
+      "name": "✍️ AI Content Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [650, 300],
+      "credentials": {"openAiApi": {"id": "{{OPENAI_CREDENTIAL_ID}}", "name": "OpenAI API"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\nconst ai = $input.last().json.choices[0].message.content;\nconst email = JSON.parse(ai);\nreturn {json: {...lead, email_content: email, step: (lead.nurture_sequence_step || 0) + 1}};"
+      },
+      "id": "parse-content",
+      "name": "📝 Parse Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.email_content.body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.email_content.subject }}"
+      },
+      "id": "send-nurture-email",
+      "name": "📧 Send Nurture Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 300],
+      "credentials": {"smtp": {"id": "{{SMTP_CREDENTIAL_ID}}", "name": "SMTP Email"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO nurture_campaigns (lead_id, nurture_sequence_step, last_nurture_sent_at, updated_at)\nVALUES ({{ $json.id }}, {{ $json.step }}, NOW(), NOW())\nON CONFLICT (lead_id) DO UPDATE SET\n  nurture_sequence_step = {{ $json.step }},\n  last_nurture_sent_at = NOW(),\n  updated_at = NOW();"
+      },
+      "id": "update-nurture-status",
+      "name": "✅ Update Nurture Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 300],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}", "name": "PostgreSQL - CRM Database"}}
+    }
+  ],
+  "connections": {
+    "⏰ Run Nurture (Mon & Thu 9am)": {"main": [[{"node": "📊 Get Leads for Nurturing", "type": "main", "index": 0}]]},
+    "📊 Get Leads for Nurturing": {"main": [[{"node": "✍️ AI Content Generator", "type": "main", "index": 0}]]},
+    "✍️ AI Content Generator": {"main": [[{"node": "📝 Parse Content", "type": "main", "index": 0}]]},
+    "📝 Parse Content": {"main": [[{"node": "📧 Send Nurture Email", "type": "main", "index": 0}]]},
+    "📧 Send Nurture Email": {"main": [[{"node": "✅ Update Nurture Status", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"id": "insurance-automation", "name": "insurance-automation"}]
+}

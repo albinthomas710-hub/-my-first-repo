@@ -1,0 +1,530 @@
+{
+  "name": "🥇 AI Lead Qualification & Scoring System",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "webhook-trigger",
+      "name": "Webhook - New Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "lead-intake",
+      "settings": {
+        "respondWithOptions": {
+          "respondWith": "json"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-config",
+      "name": "Lead Intake Endpoint",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "lead-qualification"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "leads",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "first_name": "={{ $json.first_name }}",
+            "last_name": "={{ $json.last_name }}",
+            "email": "={{ $json.email }}",
+            "phone": "={{ $json.phone }}",
+            "source": "={{ $json.source }}",
+            "age": "={{ $json.age }}",
+            "income": "={{ $json.income }}",
+            "coverage_type": "={{ $json.coverage_type }}",
+            "status": "pending_qualification",
+            "created_at": "={{ $now.toISO() }}",
+            "raw_data": "={{ JSON.stringify($json) }}"
+          }
+        }
+      },
+      "id": "save-raw-lead",
+      "name": "💾 Save Raw Lead Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert insurance lead qualification AI. Analyze the lead data and provide a comprehensive qualification score and assessment.\n\n**Scoring Criteria:**\n- Income Level (0-25 points): $30k-50k=5pts, $50k-75k=10pts, $75k-100k=15pts, $100k-150k=20pts, $150k+=25pts\n- Age Appropriateness (0-20 points): Under 25=5pts, 25-35=15pts, 36-50=20pts, 51-65=18pts, 65+=10pts\n- Coverage Interest (0-25 points): Term Life=20pts, Whole Life=25pts, Universal=22pts, Health=15pts, Disability=18pts\n- Urgency Indicators (0-15 points): Recent life event=15pts, Quote comparison=10pts, General inquiry=5pts\n- Contact Quality (0-15 points): Full info=15pts, Missing some=10pts, Minimal=5pts\n\n**Lead Quality Tiers:**\n- 80-100: HOT LEAD - Priority follow-up within 1 hour\n- 60-79: WARM LEAD - Follow-up within 4 hours\n- 40-59: LUKEWARM LEAD - Follow-up within 24 hours\n- 0-39: COLD LEAD - Nurture campaign\n\nProvide your response in JSON format with:\n{\n  \"score\": <number 0-100>,\n  \"tier\": \"HOT|WARM|LUKEWARM|COLD\",\n  \"reasoning\": \"<brief explanation>\",\n  \"red_flags\": [\"<array of concerns if any>\"],\n  \"recommended_action\": \"<specific next step>\",\n  \"urgency_level\": \"immediate|high|medium|low\",\n  \"estimated_close_probability\": \"<percentage>\",\n  \"recommended_agent_profile\": \"<senior|mid-level|junior>\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Analyze this insurance lead:\n\nName: {{ $json.first_name }} {{ $json.last_name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\nAge: {{ $json.age }}\nIncome: {{ $json.income }}\nCoverage Type: {{ $json.coverage_type }}\nSource: {{ $json.source }}\nAdditional Notes: {{ $json.notes || 'None' }}\nEmployment: {{ $json.employment_status || 'Not provided' }}\nExisting Coverage: {{ $json.has_existing_coverage || 'Unknown' }}\nTimeline: {{ $json.timeline || 'Not specified' }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 800
+        },
+        "jsonOutput": true
+      },
+      "id": "ai-qualification",
+      "name": "🧠 AI Qualification Engine",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leadData = $('Lead Intake Endpoint').first().json;\nconst aiResponse = $('🧠 AI Qualification Engine').first().json;\n\n// Parse AI response if it's a string\nlet qualification;\ntry {\n  qualification = typeof aiResponse.choices[0].message.content === 'string' \n    ? JSON.parse(aiResponse.choices[0].message.content)\n    : aiResponse.choices[0].message.content;\n} catch (e) {\n  qualification = {\n    score: 50,\n    tier: 'LUKEWARM',\n    reasoning: 'Error parsing AI response',\n    red_flags: ['AI parsing failed'],\n    recommended_action: 'Manual review required',\n    urgency_level: 'medium',\n    estimated_close_probability: '30%',\n    recommended_agent_profile: 'mid-level'\n  };\n}\n\n// Calculate follow-up timing\nconst followUpTiming = {\n  'HOT': { hours: 0.5, priority: 1 },\n  'WARM': { hours: 4, priority: 2 },\n  'LUKEWARM': { hours: 24, priority: 3 },\n  'COLD': { hours: 72, priority: 4 }\n};\n\nconst timing = followUpTiming[qualification.tier] || followUpTiming.LUKEWARM;\nconst followUpTime = new Date();\nfollowUpTime.setHours(followUpTime.getHours() + timing.hours);\n\n// Determine routing\nconst shouldAutoReject = qualification.score < 20 || \n  (qualification.red_flags && qualification.red_flags.length > 3);\n\nconst assignToSeniorAgent = qualification.score >= 80 || \n  qualification.recommended_agent_profile === 'senior';\n\nreturn {\n  json: {\n    lead_id: leadData.id || null,\n    email: leadData.email,\n    phone: leadData.phone,\n    first_name: leadData.first_name,\n    last_name: leadData.last_name,\n    qualification_score: qualification.score,\n    qualification_tier: qualification.tier,\n    reasoning: qualification.reasoning,\n    red_flags: qualification.red_flags || [],\n    recommended_action: qualification.recommended_action,\n    urgency_level: qualification.urgency_level,\n    close_probability: qualification.estimated_close_probability,\n    agent_profile: qualification.recommended_agent_profile,\n    priority: timing.priority,\n    follow_up_at: followUpTime.toISOString(),\n    should_auto_reject: shouldAutoReject,\n    assign_to_senior: assignToSeniorAgent,\n    qualified_at: new Date().toISOString(),\n    raw_lead_data: leadData,\n    ai_full_response: qualification\n  }\n};"
+      },
+      "id": "process-qualification",
+      "name": "⚙️ Process & Route Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "leads",
+        "updateKey": "email",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "qualification_score": "={{ $json.qualification_score }}",
+            "qualification_tier": "={{ $json.qualification_tier }}",
+            "status": "qualified",
+            "priority": "={{ $json.priority }}",
+            "follow_up_at": "={{ $json.follow_up_at }}",
+            "urgency_level": "={{ $json.urgency_level }}",
+            "close_probability": "={{ $json.close_probability }}",
+            "assigned_agent_tier": "={{ $json.agent_profile }}",
+            "qualification_reasoning": "={{ $json.reasoning }}",
+            "red_flags": "={{ JSON.stringify($json.red_flags) }}",
+            "qualified_at": "={{ $json.qualified_at }}",
+            "updated_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "update-lead-db",
+      "name": "💾 Update Lead Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "hot-lead",
+              "leftValue": "={{ $json.qualification_tier }}",
+              "rightValue": "HOT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-by-tier",
+      "name": "🔀 Route By Tier",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_AGENT_CHAT_ID}}",
+        "text": "🔥 **HOT LEAD ALERT** 🔥\n\nScore: {{ $json.qualification_score }}/100\nName: {{ $json.first_name }} {{ $json.last_name }}\nPhone: {{ $json.phone }}\nEmail: {{ $json.email }}\n\n📊 Qualification:\n• Tier: {{ $json.qualification_tier }}\n• Close Probability: {{ $json.close_probability }}\n• Urgency: {{ $json.urgency_level }}\n\n💡 AI Analysis:\n{{ $json.reasoning }}\n\n⚡ Recommended Action:\n{{ $json.recommended_action }}\n\n⏰ **CALL WITHIN 30 MINUTES**",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "hot-lead-alert",
+      "name": "🚨 HOT Lead - Instant Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1450, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "{{TELEGRAM_CREDENTIAL_ID}}",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "resource": "contact",
+        "additionalFields": {
+          "customFields": {
+            "customFieldsValues": [
+              {
+                "fieldId": "lead_score",
+                "value": "={{ $json.qualification_score }}"
+              },
+              {
+                "fieldId": "qualification_tier",
+                "value": "={{ $json.qualification_tier }}"
+              },
+              {
+                "fieldId": "close_probability",
+                "value": "={{ $json.close_probability }}"
+              }
+            ]
+          },
+          "tags": "hot_lead,ai_qualified,priority_{{ $json.priority }}"
+        },
+        "email": "={{ $json.email }}",
+        "firstName": "={{ $json.first_name }}",
+        "lastName": "={{ $json.last_name }}",
+        "phone": "={{ $json.phone }}"
+      },
+      "id": "add-to-crm-hot",
+      "name": "📇 Add to CRM (HOT)",
+      "type": "n8n-nodes-base.goHighLevel",
+      "typeVersion": 1,
+      "position": [1650, 200],
+      "credentials": {
+        "goHighLevelApi": {
+          "id": "{{GHL_CREDENTIAL_ID}}",
+          "name": "GoHighLevel"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Hi {{ $json.first_name }},\n\nThank you for your interest in {{ $json.coverage_type }} coverage! I've reviewed your information and I have some excellent options that could save you money.\n\nI'd love to jump on a quick 15-minute call to discuss your specific situation.\n\nWhen works best for you today or tomorrow? I have availability at:\n• {{ $now.plus({hours: 2}).toFormat('h:mm a') }}\n• {{ $now.plus({hours: 4}).toFormat('h:mm a') }}\n• Tomorrow at {{ $now.plus({days: 1}).toFormat('h:mm a') }}\n\nOr book directly here: {{$env.CALENDAR_BOOKING_LINK}}\n\nLooking forward to helping you get the right coverage!\n\nBest regards,\n{{ $env.AGENT_NAME }}\n{{ $env.AGENT_PHONE }}\n{{ $env.AGENCY_NAME }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "Your {{ $json.coverage_type }} Quote - Let's Connect!",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "send-hot-email",
+      "name": "📧 Send Priority Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1850, 200],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "Hi {{ $json.first_name }}! This is {{ $env.AGENT_NAME }} from {{ $env.AGENCY_NAME }}. I just received your inquiry about {{ $json.coverage_type }} coverage. I have some great options for you! Checking your availability for a quick call today. You can also book here: {{ $env.CALENDAR_BOOKING_LINK }}"
+      },
+      "id": "send-hot-sms",
+      "name": "💬 Send Priority SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [2050, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "resource": "contact",
+        "additionalFields": {
+          "customFields": {
+            "customFieldsValues": [
+              {
+                "fieldId": "lead_score",
+                "value": "={{ $json.qualification_score }}"
+              },
+              {
+                "fieldId": "qualification_tier",
+                "value": "={{ $json.qualification_tier }}"
+              }
+            ]
+          },
+          "tags": "warm_lead,ai_qualified,priority_{{ $json.priority }}"
+        },
+        "email": "={{ $json.email }}",
+        "firstName": "={{ $json.first_name }}",
+        "lastName": "={{ $json.last_name }}",
+        "phone": "={{ $json.phone }}"
+      },
+      "id": "add-to-crm-warm",
+      "name": "📇 Add to CRM (WARM/COLD)",
+      "type": "n8n-nodes-base.goHighLevel",
+      "typeVersion": 1,
+      "position": [1450, 400],
+      "credentials": {
+        "goHighLevelApi": {
+          "id": "{{GHL_CREDENTIAL_ID}}",
+          "name": "GoHighLevel"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "workspaceId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_WORKSPACE_ID}}",
+          "mode": "id"
+        },
+        "channelId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_CHANNEL_LEADS}}",
+          "mode": "id"
+        },
+        "text": "📊 New Lead Qualified\n\nScore: {{ $json.qualification_score }}/100\nTier: {{ $json.qualification_tier }}\nName: {{ $json.first_name }} {{ $json.last_name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\n\nFollow up by: {{ $json.follow_up_at }}"
+      },
+      "id": "notify-team",
+      "name": "📢 Notify Team (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1650, 400],
+      "credentials": {
+        "slackApi": {
+          "id": "{{SLACK_CREDENTIAL_ID}}",
+          "name": "Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Lead qualified successfully\",\n  \"data\": {\n    \"qualification_score\": $json.qualification_score,\n    \"tier\": $json.qualification_tier,\n    \"follow_up_time\": $json.follow_up_at,\n    \"urgency\": $json.urgency_level\n  }\n} }}",
+        "options": {
+          "responseHeaders": {
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "✅ Send Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2250, 300]
+    }
+  ],
+  "connections": {
+    "Lead Intake Endpoint": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Raw Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Raw Lead Data": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI Qualification Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI Qualification Engine": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process & Route Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process & Route Lead": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "🔀 Route By Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Route By Tier": {
+      "main": [
+        [
+          {
+            "node": "🚨 HOT Lead - Instant Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📇 Add to CRM (WARM/COLD)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 HOT Lead - Instant Alert": {
+      "main": [
+        [
+          {
+            "node": "📇 Add to CRM (HOT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📇 Add to CRM (HOT)": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Priority Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Priority Email": {
+      "main": [
+        [
+          {
+            "node": "💬 Send Priority SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Priority SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Send Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📇 Add to CRM (WARM/COLD)": {
+      "main": [
+        [
+          {
+            "node": "📢 Notify Team (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📢 Notify Team (Slack)": {
+      "main": [
+        [
+          {
+            "node": "✅ Send Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "ai-qualification",
+      "name": "ai-qualification"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,502 @@
+{
+  "name": "🥈 Smart Follow-Up Automation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "⏰ Check Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  l.*,\n  COALESCE(fc.follow_up_count, 0) as follow_up_count,\n  fc.last_contact_at,\n  fc.last_contact_type,\n  fc.next_follow_up_at\nFROM leads l\nLEFT JOIN follow_up_campaigns fc ON l.id = fc.lead_id\nWHERE \n  l.status NOT IN ('closed_won', 'closed_lost', 'unsubscribed')\n  AND (\n    -- New leads needing first contact\n    (fc.follow_up_count IS NULL AND l.created_at < NOW() - INTERVAL '30 minutes')\n    \n    -- Scheduled follow-ups due now\n    OR (fc.next_follow_up_at IS NOT NULL AND fc.next_follow_up_at <= NOW())\n    \n    -- Leads with no response after 3 days\n    OR (fc.last_contact_at < NOW() - INTERVAL '3 days' AND fc.follow_up_count < 7)\n    \n    -- High-priority leads needing quick follow-up\n    OR (l.qualification_tier = 'HOT' AND fc.last_contact_at < NOW() - INTERVAL '4 hours')\n    \n    -- Renewal reminders (30, 15, 7, 1 day before)\n    OR (l.policy_renewal_date IS NOT NULL \n        AND l.policy_renewal_date BETWEEN NOW() AND NOW() + INTERVAL '30 days'\n        AND (fc.renewal_reminder_sent IS NULL OR fc.renewal_reminder_sent = false))\n  )\nORDER BY \n  l.qualification_score DESC,\n  l.created_at DESC\nLIMIT 50;",
+        "options": {}
+      },
+      "id": "get-leads-for-followup",
+      "name": "📊 Get Leads Needing Follow-Up",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "has-leads",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-if-leads-exist",
+      "name": "🔍 Any Leads to Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split-leads",
+              "name": "lead",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "split-into-items",
+      "name": "🔄 Split Into Individual Leads",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\nconst followUpCount = lead.follow_up_count || 0;\nconst tier = lead.qualification_tier || 'LUKEWARM';\nconst daysSinceCreated = Math.floor(\n  (new Date() - new Date(lead.created_at)) / (1000 * 60 * 60 * 24)\n);\n\n// Determine follow-up strategy based on count and tier\nconst strategies = {\n  0: {\n    channel: 'multi',\n    delay_hours: 0,\n    template: 'initial_contact',\n    subject: 'Your Insurance Quote Request'\n  },\n  1: {\n    channel: 'email',\n    delay_hours: 24,\n    template: 'value_proposition',\n    subject: 'Here\\'s How We Can Save You Money'\n  },\n  2: {\n    channel: 'sms',\n    delay_hours: 48,\n    template: 'quick_check_in',\n    subject: null\n  },\n  3: {\n    channel: 'email',\n    delay_hours: 96,\n    template: 'educational_content',\n    subject: 'Important: Understanding Your Coverage Options'\n  },\n  4: {\n    channel: 'sms',\n    delay_hours: 168, // 7 days\n    template: 'last_chance',\n    subject: null\n  },\n  5: {\n    channel: 'email',\n    delay_hours: 240, // 10 days\n    template: 'breakup_email',\n    subject: 'Should I close your file?'\n  },\n  6: {\n    channel: 'sms',\n    delay_hours: 336, // 14 days\n    template: 'final_reach_out',\n    subject: null\n  }\n};\n\nconst strategy = strategies[followUpCount] || strategies[6];\n\n// Hot leads get more aggressive follow-up\nif (tier === 'HOT' && followUpCount < 3) {\n  strategy.delay_hours = Math.floor(strategy.delay_hours / 2);\n}\n\n// Calculate next follow-up time\nconst nextFollowUp = new Date();\nnextFollowUp.setHours(nextFollowUp.getHours() + (strategy.delay_hours || 24));\n\n// Determine if we should stop following up\nconst shouldStopFollowUp = followUpCount >= 7 || daysSinceCreated > 21;\n\nreturn {\n  json: {\n    ...lead,\n    follow_up_strategy: strategy,\n    next_follow_up_at: nextFollowUp.toISOString(),\n    should_stop_follow_up: shouldStopFollowUp,\n    days_since_created: daysSinceCreated,\n    current_follow_up_number: followUpCount + 1\n  }\n};"
+      },
+      "id": "determine-strategy",
+      "name": "🧠 AI Follow-Up Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "should-continue",
+              "leftValue": "={{ $json.should_stop_follow_up }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-should-continue",
+      "name": "✅ Continue Follow-Up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 220]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert insurance sales copywriter. Create personalized, warm, and helpful follow-up messages that build trust and encourage response.\n\n**Tone Guidelines:**\n- Conversational and friendly, not pushy\n- Focus on VALUE and helping, not selling\n- Create urgency without being desperate\n- Personalize based on their specific situation\n- Short and scannable (emails max 150 words, SMS max 160 characters)\n\n**Template Types:**\n\n**initial_contact**: Thank them, acknowledge their inquiry, offer immediate value\n**value_proposition**: Share specific benefits, address common concerns\n**quick_check_in**: Casual check-in, offer to answer questions\n**educational_content**: Provide useful information related to their coverage type\n**last_chance**: Create FOMO, limited time opportunity\n**breakup_email**: The famous \"should I close your file?\" approach\n**final_reach_out**: One last helpful touchpoint before moving to nurture\n\nProvide response in JSON:\n{\n  \"email_subject\": \"subject line\",\n  \"email_body\": \"full email text\",\n  \"sms_message\": \"SMS version\",\n  \"personalization_notes\": \"why this message works for this lead\"\n}"
+            },
+            {
+              "role": "user",
+              "content": "Create a {{ $json.follow_up_strategy.template }} follow-up message for:\n\nName: {{ $json.first_name }} {{ $json.last_name }}\nCoverage Interest: {{ $json.coverage_type }}\nQualification Tier: {{ $json.qualification_tier }}\nFollow-Up #{{ $json.current_follow_up_number }}\nDays Since Inquiry: {{ $json.days_since_created }}\nAge: {{ $json.age }}\nSource: {{ $json.source }}\n\nAgent Info:\nName: {{ $env.AGENT_NAME }}\nAgency: {{ $env.AGENCY_NAME }}\nPhone: {{ $env.AGENT_PHONE }}\nBooking Link: {{ $env.CALENDAR_BOOKING_LINK }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 600
+        },
+        "jsonOutput": true
+      },
+      "id": "generate-message",
+      "name": "✍️ AI Message Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [1450, 140],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{OPENAI_CREDENTIAL_ID}}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\nconst aiMessage = $input.last().json;\n\n// Parse AI response\nlet messages;\ntry {\n  const content = aiMessage.choices[0].message.content;\n  messages = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  // Fallback message\n  messages = {\n    email_subject: `Following up on your ${lead.coverage_type} inquiry`,\n    email_body: `Hi ${lead.first_name},\\n\\nI wanted to follow up on your recent inquiry about ${lead.coverage_type} coverage. I have some excellent options that could work well for your situation.\\n\\nWhen would be a good time for a quick 15-minute call?\\n\\nBest regards,\\n${process.env.AGENT_NAME}`,\n    sms_message: `Hi ${lead.first_name}, following up on your ${lead.coverage_type} inquiry. Have time for a quick call? - ${process.env.AGENT_NAME}`,\n    personalization_notes: 'Generic fallback message'\n  };\n}\n\nreturn {\n  json: {\n    ...lead,\n    generated_messages: messages\n  }\n};"
+      },
+      "id": "parse-ai-message",
+      "name": "📝 Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false\n          },
+          "conditions": [
+            {
+              "id": "send-email",
+              "leftValue": "={{ $json.follow_up_strategy.channel }}",
+              "rightValue": "email,multi",
+              "operator": {
+                "type": "string",
+                "operation": "includes"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-by-channel",
+      "name": "📬 Route by Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1850, 220]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.generated_messages.email_body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.generated_messages.email_subject }}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "ccEmail": "={{ $env.AGENT_BCC_EMAIL }}",
+          "appendAttribution": false
+        }
+      },
+      "id": "send-email",
+      "name": "📧 Send Follow-Up Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2050, 100],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.generated_messages.sms_message }}"
+      },
+      "id": "send-sms",
+      "name": "💬 Send Follow-Up SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [2050, 260],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Update or insert follow-up campaign record\nINSERT INTO follow_up_campaigns (\n  lead_id,\n  follow_up_count,\n  last_contact_at,\n  last_contact_type,\n  last_message_sent,\n  next_follow_up_at,\n  updated_at\n) VALUES (\n  {{ $json.id }},\n  {{ $json.current_follow_up_number }},\n  NOW(),\n  '{{ $json.follow_up_strategy.channel }}',\n  $${{ $json.generated_messages.email_subject || $json.generated_messages.sms_message }}$$,\n  '{{ $json.next_follow_up_at }}',\n  NOW()\n)\nON CONFLICT (lead_id) \nDO UPDATE SET\n  follow_up_count = {{ $json.current_follow_up_number }},\n  last_contact_at = NOW(),\n  last_contact_type = '{{ $json.follow_up_strategy.channel }}',\n  last_message_sent = $${{ $json.generated_messages.email_subject || $json.generated_messages.sms_message }}$$,\n  next_follow_up_at = '{{ $json.next_follow_up_at }}',\n  updated_at = NOW();\n\n-- Update lead status\nUPDATE leads \nSET \n  last_contacted_at = NOW(),\n  follow_up_count = {{ $json.current_follow_up_number }},\n  updated_at = NOW()\nWHERE id = {{ $json.id }};",
+        "options": {}
+      },
+      "id": "update-campaign-record",
+      "name": "💾 Update Campaign Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2250, 180],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark lead as nurture status (moved out of active follow-up)\nUPDATE leads\nSET \n  status = 'nurture',\n  nurture_campaign_id = 'long_term_nurture',\n  active_follow_up = false,\n  updated_at = NOW()\nWHERE id = {{ $json.id }};\n\n-- Log the transition\nINSERT INTO lead_activity_log (\n  lead_id,\n  activity_type,\n  activity_description,\n  created_at\n) VALUES (\n  {{ $json.id }},\n  'moved_to_nurture',\n  'Lead moved to long-term nurture campaign after {{ $json.current_follow_up_number }} follow-ups',\n  NOW()\n);",
+        "options": {}
+      },
+      "id": "move-to-nurture",
+      "name": "🌱 Move to Nurture Campaign",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1450, 380],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get statistics for this run\nSELECT \n  COUNT(*) FILTER (WHERE last_contact_type = 'email') as emails_sent,\n  COUNT(*) FILTER (WHERE last_contact_type = 'sms') as sms_sent,\n  COUNT(*) FILTER (WHERE last_contact_type = 'multi') as multi_sent,\n  COUNT(DISTINCT lead_id) as total_leads_contacted,\n  AVG(follow_up_count) as avg_follow_up_number\nFROM follow_up_campaigns\nWHERE last_contact_at >= NOW() - INTERVAL '20 minutes';",
+        "options": {}
+      },
+      "id": "get-stats",
+      "name": "📊 Get Run Statistics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2450, 180],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "workspaceId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_WORKSPACE_ID}}",
+          "mode": "id"
+        },
+        "channelId": {
+          "__rl": true,
+          "value": "={{$env.SLACK_CHANNEL_AUTOMATION}}",
+          "mode": "id"
+        },
+        "text": "📬 Follow-Up Campaign Run Complete\n\n✉️ Emails Sent: {{ $json.emails_sent }}\n💬 SMS Sent: {{ $json.sms_sent }}\n🎯 Multi-Channel: {{ $json.multi_sent }}\n👥 Total Leads Contacted: {{ $json.total_leads_contacted }}\n📈 Avg Follow-Up Number: {{ $json.avg_follow_up_number }}\n\n⏰ Next run in 15 minutes"
+      },
+      "id": "notify-completion",
+      "name": "📢 Report to Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [2650, 180],
+      "credentials": {
+        "slackApi": {
+          "id": "{{SLACK_CREDENTIAL_ID}}",
+          "name": "Slack"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Check Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "📊 Get Leads Needing Follow-Up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Get Leads Needing Follow-Up": {
+      "main": [
+        [
+          {
+            "node": "🔍 Any Leads to Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Any Leads to Process?": {
+      "main": [
+        [
+          {
+            "node": "🔄 Split Into Individual Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Split Into Individual Leads": {
+      "main": [
+        [
+          {
+            "node": "🧠 AI Follow-Up Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 AI Follow-Up Strategy": {
+      "main": [
+        [
+          {
+            "node": "✅ Continue Follow-Up?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Continue Follow-Up?": {
+      "main": [
+        [
+          {
+            "node": "✍️ AI Message Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🌱 Move to Nurture Campaign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✍️ AI Message Generator": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "📬 Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📬 Route by Channel": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Follow-Up Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Send Follow-Up SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Follow-Up Email": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Campaign Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Follow-Up SMS": {
+      "main": [
+        [
+          {
+            "node": "💾 Update Campaign Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Update Campaign Record": {
+      "main": [
+        [
+          {
+            "node": "📊 Get Run Statistics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Get Run Statistics": {
+      "main": [
+        [
+          {
+            "node": "📢 Report to Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "follow-up",
+      "name": "follow-up"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

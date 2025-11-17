@@ -1,0 +1,138 @@
+{
+  "name": "💬 Pre-Qualification Chat Bot & Intake Form",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "chat/message", "responseMode": "responseNode"},
+      "id": "webhook-chat",
+      "name": "💬 Chat Message (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "chat-message"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM chat_sessions WHERE session_id = '{{ $json.session_id }}' ORDER BY created_at DESC LIMIT 10;"
+      },
+      "id": "get-chat-history",
+      "name": "📜 Get Chat History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "modelId": {"__rl": true, "value": "gpt-4o-mini", "mode": "list"},
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a friendly insurance pre-qualification assistant for {{ $env.AGENCY_NAME }}.\n\n**Your Goals:**\n1. Qualify the lead (collect: name, email, phone, age, income range, coverage type, urgency)\n2. Build rapport and trust\n3. Create urgency to book a call\n4. Hand off to agent when qualified\n\n**Tone:** Friendly, helpful, consultative (not pushy)\n\n**Pre-Qualification Questions (ask conversationally, not like a form):**\n- What type of coverage are you interested in?\n- What's your name?\n- Best email to send info?\n- Phone number (for quick questions)?\n- Age range? (for accurate quotes)\n- Household income range?\n- When do you need coverage?\n- Do you have existing coverage?\n\n**When to hand off:** After collecting name, email, phone, and coverage type.\n\nRespond with JSON: {\"message\": \"your response\", \"collected_fields\": {\"name\": \"...\", \"email\": \"...\", etc}, \"ready_for_handoff\": true/false}"
+            },
+            {
+              "role": "user",
+              "content": "User message: {{ $json.message }}\n\nChat history: {{ JSON.stringify($('📜 Get Chat History').all()) }}"
+            }
+          ]
+        },
+        "jsonOutput": true
+      },
+      "id": "ai-chat-bot",
+      "name": "🤖 AI Chat Bot",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [650, 300],
+      "credentials": {"openAiApi": {"id": "{{OPENAI_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst ai = $input.last().json.choices[0].message.content;\nconst response = JSON.parse(ai);\nreturn {json: {...input, bot_response: response.message, fields: response.collected_fields || {}, ready: response.ready_for_handoff}};"
+      },
+      "id": "parse-bot-response",
+      "name": "📝 Parse Bot Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "chat_sessions",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{ $json.session_id }}",
+            "user_message": "={{ $json.message }}",
+            "bot_response": "={{ $json.bot_response }}",
+            "collected_data": "={{ JSON.stringify($json.fields) }}",
+            "ready_for_handoff": "={{ $json.ready }}",
+            "created_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "save-chat",
+      "name": "💾 Save Chat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 300],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{"leftValue": "={{ $json.ready }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}]
+        }
+      },
+      "id": "check-handoff",
+      "name": "🔀 Ready for Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/webhook/new-lead",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "first_name", "value": "={{ $json.fields.name }}"},
+            {"name": "email", "value": "={{ $json.fields.email }}"},
+            {"name": "phone", "value": "={{ $json.fields.phone }}"},
+            {"name": "coverage_type", "value": "={{ $json.fields.coverage_type }}"},
+            {"name": "source", "value": "chat_bot"}
+          ]
+        }
+      },
+      "id": "create-lead",
+      "name": "🎯 Create Lead & Trigger Qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 240]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"message\": $json.bot_response, \"ready_for_agent\": $json.ready} }}"
+      },
+      "id": "respond-to-chat",
+      "name": "✅ Respond to Chat",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1650, 300]
+    }
+  ],
+  "connections": {
+    "💬 Chat Message (Webhook)": {"main": [[{"node": "📜 Get Chat History", "type": "main", "index": 0}]]},
+    "📜 Get Chat History": {"main": [[{"node": "🤖 AI Chat Bot", "type": "main", "index": 0}]]},
+    "🤖 AI Chat Bot": {"main": [[{"node": "📝 Parse Bot Response", "type": "main", "index": 0}]]},
+    "📝 Parse Bot Response": {"main": [[{"node": "💾 Save Chat", "type": "main", "index": 0}]]},
+    "💾 Save Chat": {"main": [[{"node": "🔀 Ready for Handoff?", "type": "main", "index": 0}]]},
+    "🔀 Ready for Handoff?": {"main": [[{"node": "🎯 Create Lead & Trigger Qualification", "type": "main", "index": 0}], [{"node": "✅ Respond to Chat", "type": "main", "index": 0}]]},
+    "🎯 Create Lead & Trigger Qualification": {"main": [[{"node": "✅ Respond to Chat", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"id": "insurance-automation", "name": "insurance-automation"}]
+}

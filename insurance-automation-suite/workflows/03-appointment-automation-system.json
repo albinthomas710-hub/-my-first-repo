@@ -1,0 +1,707 @@
+{
+  "name": "🥉 Appointment Automation & No-Show Prevention System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment/book",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-appointment-booked",
+      "name": "📅 Appointment Booked (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "appointment-booked"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "appointments",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "calendar_event_id": "={{ $json.event_id }}",
+            "appointment_time": "={{ $json.appointment_time }}",
+            "timezone": "={{ $json.timezone || 'America/New_York' }}",
+            "meeting_type": "={{ $json.meeting_type || 'discovery_call' }}",
+            "meeting_link": "={{ $json.meeting_link }}",
+            "status": "confirmed",
+            "booked_at": "={{ $now.toISO() }}",
+            "lead_email": "={{ $json.email }}",
+            "lead_phone": "={{ $json.phone }}",
+            "lead_name": "={{ $json.name }}",
+            "reminder_1_sent": false,
+            "reminder_2_sent": false,
+            "reminder_3_sent": false,
+            "confirmation_sent": false
+          }
+        }
+      },
+      "id": "save-appointment",
+      "name": "💾 Save Appointment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Hi {{ $json.name.split(' ')[0] }},\n\n🎉 **Your appointment is confirmed!**\n\n📅 **When:** {{ DateTime.fromISO($json.appointment_time).toFormat('EEEE, MMMM d') }} at {{ DateTime.fromISO($json.appointment_time).toFormat('h:mm a') }}\n🕐 **Duration:** 30 minutes\n💻 **Meeting Link:** {{ $json.meeting_link }}\n\n**What to expect:**\n✓ Review your current coverage situation\n✓ Discuss your protection goals\n✓ Get personalized recommendations\n✓ Answer all your questions\n\n**Before our call, please:**\n• Have details of any current policies handy\n• Think about your coverage goals\n• Prepare any questions you have\n\nI'm looking forward to helping you find the perfect coverage!\n\nIf you need to reschedule, just reply to this email or text me at {{ $env.AGENT_PHONE }}.\n\nBest regards,\n{{ $env.AGENT_NAME }}\n{{ $env.AGENCY_NAME }}\n{{ $env.AGENT_PHONE }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "✅ Appointment Confirmed - {{ DateTime.fromISO($json.appointment_time).toFormat('MMM d') }} at {{ DateTime.fromISO($json.appointment_time).toFormat('h:mm a') }}",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "send-confirmation-email",
+      "name": "📧 Send Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [650, 220],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "Hi {{ $json.name.split(' ')[0] }}! 🎉 Your appointment with {{ $env.AGENT_NAME }} is confirmed for {{ DateTime.fromISO($json.appointment_time).toFormat('MMM d') }} at {{ DateTime.fromISO($json.appointment_time).toFormat('h:mm a') }}. Meeting link: {{ $json.meeting_link }} - See you then!"
+      },
+      "id": "send-confirmation-sms",
+      "name": "💬 Send Confirmation SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [650, 380],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "appointments",
+        "updateKey": "calendar_event_id",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "confirmation_sent": true,
+            "confirmation_sent_at": "={{ $now.toISO() }}"
+          }
+        }
+      },
+      "id": "mark-confirmation-sent",
+      "name": "✅ Mark Confirmation Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Appointment confirmed and reminders scheduled\",\n  \"appointment_id\": $json.calendar_event_id,\n  \"appointment_time\": $json.appointment_time\n} }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "✅ Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "reminder-schedule",
+      "name": "⏰ Check Reminders (Every 2 Hours)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 700]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  a.*,\n  l.first_name,\n  l.last_name,\n  l.qualification_tier,\n  EXTRACT(EPOCH FROM (a.appointment_time - NOW())) / 3600 AS hours_until_appointment\nFROM appointments a\nLEFT JOIN leads l ON a.lead_id = l.id\nWHERE \n  a.status IN ('confirmed', 'reminded')\n  AND a.appointment_time > NOW()\n  AND (\n    -- 24 hour reminder (within 24-26 hours)\n    (a.reminder_1_sent = false AND a.appointment_time BETWEEN NOW() + INTERVAL '24 hours' AND NOW() + INTERVAL '26 hours')\n    \n    -- 4 hour reminder (within 4-6 hours)\n    OR (a.reminder_2_sent = false AND a.appointment_time BETWEEN NOW() + INTERVAL '4 hours' AND NOW() + INTERVAL '6 hours')\n    \n    -- 30 minute reminder (within 30-60 minutes)\n    OR (a.reminder_3_sent = false AND a.appointment_time BETWEEN NOW() + INTERVAL '30 minutes' AND NOW() + INTERVAL '60 minutes')\n  )\nORDER BY a.appointment_time ASC;",
+        "options": {}
+      },
+      "id": "get-appointments-for-reminders",
+      "name": "📋 Get Appointments Needing Reminders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 700],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-appointments",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-has-appointments",
+      "name": "❓ Any Reminders to Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 700]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split",
+              "name": "appointment",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "split-appointments",
+      "name": "🔄 Split Appointments",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 640]
+    },
+    {
+      "parameters": {
+        "jsCode": "const appt = $input.first().json;\nconst hoursUntil = appt.hours_until_appointment;\n\nlet reminderType, reminderNumber;\n\nif (hoursUntil >= 24 && hoursUntil <= 26 && !appt.reminder_1_sent) {\n  reminderType = '24_hour';\n  reminderNumber = 1;\n} else if (hoursUntil >= 4 && hoursUntil <= 6 && !appt.reminder_2_sent) {\n  reminderType = '4_hour';\n  reminderNumber = 2;\n} else if (hoursUntil >= 0.5 && hoursUntil <= 1 && !appt.reminder_3_sent) {\n  reminderType = '30_minute';\n  reminderNumber = 3;\n} else {\n  // Skip this one\n  return null;\n}\n\nconst apptTime = new Date(appt.appointment_time);\nconst firstName = appt.lead_name.split(' ')[0];\n\nconst messages = {\n  '24_hour': {\n    email_subject: `Reminder: Your appointment tomorrow at ${apptTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,\n    email_body: `Hi ${firstName},\\n\\nThis is a friendly reminder that you have an appointment scheduled with ${process.env.AGENT_NAME} tomorrow:\\n\\n📅 ${apptTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}\\n🕐 ${apptTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}\\n💻 Meeting Link: ${appt.meeting_link}\\n\\nLooking forward to speaking with you!\\n\\nIf you need to reschedule, please let me know ASAP.\\n\\nBest regards,\\n${process.env.AGENT_NAME}`,\n    sms_message: `Hi ${firstName}! Reminder: Your appointment with ${process.env.AGENT_NAME} is tomorrow at ${apptTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}. Link: ${appt.meeting_link}`\n  },\n  '4_hour': {\n    email_subject: `Your appointment is in 4 hours`,\n    email_body: `Hi ${firstName},\\n\\nJust a quick reminder - your appointment is coming up in about 4 hours!\\n\\n🕐 Time: ${apptTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}\\n💻 Meeting Link: ${appt.meeting_link}\\n\\nSee you soon!\\n\\n${process.env.AGENT_NAME}`,\n    sms_message: `Hi ${firstName}! Your appointment is in 4 hours at ${apptTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}. Link: ${appt.meeting_link} - See you soon!`\n  },\n  '30_minute': {\n    email_subject: `Starting in 30 minutes!`,\n    email_body: `Hi ${firstName},\\n\\nYour appointment starts in 30 minutes!\\n\\n💻 Join here: ${appt.meeting_link}\\n\\nSee you very soon!\\n${process.env.AGENT_NAME}`,\n    sms_message: `${firstName}, your call starts in 30 min! Join: ${appt.meeting_link}`\n  }\n};\n\nreturn {\n  json: {\n    ...appt,\n    reminder_type: reminderType,\n    reminder_number: reminderNumber,\n    reminder_messages: messages[reminderType],\n    first_name: firstName\n  }\n};"
+      },
+      "id": "determine-reminder-type",
+      "name": "🎯 Determine Reminder Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 640]
+    },
+    {
+      "parameters": {
+        "content": "={{ $json.reminder_messages.email_body }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.lead_email }}",
+        "subject": "={{ $json.reminder_messages.email_subject }}",
+        "options": {}
+      },
+      "id": "send-reminder-email",
+      "name": "📧 Send Reminder Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1250, 560],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.lead_phone }}",
+        "message": "={{ $json.reminder_messages.sms_message }}"
+      },
+      "id": "send-reminder-sms",
+      "name": "💬 Send Reminder SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1250, 720],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE appointments\nSET \n  reminder_{{ $json.reminder_number }}_sent = true,\n  reminder_{{ $json.reminder_number }}_sent_at = NOW(),\n  status = 'reminded',\n  updated_at = NOW()\nWHERE id = {{ $json.id }};",
+        "options": {}
+      },
+      "id": "mark-reminder-sent",
+      "name": "✅ Mark Reminder Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1450, 640],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */1 * * *"
+            }
+          ]
+        }
+      },
+      "id": "no-show-check-schedule",
+      "name": "⏰ Check No-Shows (Hourly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 1100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  a.*,\n  l.first_name,\n  l.last_name,\n  l.email,\n  l.phone,\n  l.qualification_tier,\n  l.qualification_score\nFROM appointments a\nLEFT JOIN leads l ON a.lead_id = l.id\nWHERE \n  a.status IN ('confirmed', 'reminded')\n  AND a.appointment_time < NOW() - INTERVAL '15 minutes'\n  AND a.appointment_time > NOW() - INTERVAL '2 hours'\n  AND a.no_show_recovery_sent = false\nORDER BY a.appointment_time DESC;",
+        "options": {}
+      },
+      "id": "get-no-shows",
+      "name": "🚨 Get No-Show Appointments",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 1100],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {},
+          "conditions": [
+            {
+              "id": "has-noshows",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-has-noshows",
+      "name": "❓ Any No-Shows?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 1100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split-noshows",
+              "name": "appointment",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "split-noshows",
+      "name": "🔄 Split No-Shows",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 1040]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "Hi {{ $json.first_name }}, I was looking forward to our call but didn't see you join. Everything okay? I'd still love to help you with your {{ $json.meeting_type }} - can we reschedule? Book here: {{ $env.CALENDAR_BOOKING_LINK }} or just reply!"
+      },
+      "id": "send-noshow-sms",
+      "name": "💬 Send No-Show Recovery SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [1050, 960],
+      "credentials": {
+        "twilioApi": {
+          "id": "{{TWILIO_CREDENTIAL_ID}}",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Hi {{ $json.first_name }},\n\nI was really looking forward to our call today at {{ DateTime.fromISO($json.appointment_time).toFormat('h:mm a') }}, but I didn't see you join the meeting.\n\nI understand things come up! \n\nI still want to help you get the right coverage and answer any questions you have. Would you like to reschedule?\n\nYou can book a new time here: {{ $env.CALENDAR_BOOKING_LINK }}\n\nOr just reply to this email with a time that works better for you.\n\nLooking forward to connecting!\n\nBest regards,\n{{ $env.AGENT_NAME }}\n{{ $env.AGENT_PHONE }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "Missed you today - let's reschedule?",
+        "options": {}
+      },
+      "id": "send-noshow-email",
+      "name": "📧 Send No-Show Recovery Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 1120],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_CREDENTIAL_ID}}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE appointments\nSET \n  status = 'no_show',\n  no_show_recovery_sent = true,\n  no_show_recovery_sent_at = NOW(),\n  updated_at = NOW()\nWHERE id = {{ $json.id }};\n\n-- Update lead status\nUPDATE leads\nSET \n  status = 'no_show_recovery',\n  last_no_show_at = NOW(),\n  updated_at = NOW()\nWHERE id = {{ $json.lead_id }};",
+        "options": {}
+      },
+      "id": "mark-noshow-processed",
+      "name": "✅ Mark No-Show Processed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 1040],
+      "credentials": {
+        "postgres": {
+          "id": "{{POSTGRES_CREDENTIAL_ID}}",
+          "name": "PostgreSQL - CRM Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{$env.TELEGRAM_AGENT_CHAT_ID}}",
+        "text": "⚠️ **NO-SHOW ALERT**\n\nLead: {{ $json.first_name }} {{ $json.last_name }}\nScheduled: {{ DateTime.fromISO($json.appointment_time).toFormat('MMM d, h:mm a') }}\nQualification: {{ $json.qualification_tier }} ({{ $json.qualification_score }}/100)\n\nRecovery messages sent automatically.\n\nRecommended: Personal call/voicemail within next 2 hours.",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "alert-agent-noshow",
+      "name": "📢 Alert Agent (High-Value Leads)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1450, 1040],
+      "credentials": {
+        "telegramApi": {
+          "id": "{{TELEGRAM_CREDENTIAL_ID}}",
+          "name": "Telegram Bot"
+        }
+      },
+      "filter": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "high-value",
+              "leftValue": "={{ $json.qualification_score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "📅 Appointment Booked (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "💾 Save Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Save Appointment": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Confirmation Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Send Confirmation SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Confirmation Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Confirmation SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Confirmation Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Mark Confirmation Sent": {
+      "main": [
+        [
+          {
+            "node": "✅ Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Check Reminders (Every 2 Hours)": {
+      "main": [
+        [
+          {
+            "node": "📋 Get Appointments Needing Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Get Appointments Needing Reminders": {
+      "main": [
+        [
+          {
+            "node": "❓ Any Reminders to Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Any Reminders to Send?": {
+      "main": [
+        [
+          {
+            "node": "🔄 Split Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Split Appointments": {
+      "main": [
+        [
+          {
+            "node": "🎯 Determine Reminder Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Determine Reminder Type": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Reminder Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💬 Send Reminder SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Reminder Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Reminder Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send Reminder SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark Reminder Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Check No-Shows (Hourly)": {
+      "main": [
+        [
+          {
+            "node": "🚨 Get No-Show Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Get No-Show Appointments": {
+      "main": [
+        [
+          {
+            "node": "❓ Any No-Shows?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Any No-Shows?": {
+      "main": [
+        [
+          {
+            "node": "🔄 Split No-Shows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Split No-Shows": {
+      "main": [
+        [
+          {
+            "node": "💬 Send No-Show Recovery SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📧 Send No-Show Recovery Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Send No-Show Recovery SMS": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark No-Show Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send No-Show Recovery Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Mark No-Show Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Mark No-Show Processed": {
+      "main": [
+        [
+          {
+            "node": "📢 Alert Agent (High-Value Leads)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "{{ERROR_WORKFLOW_ID}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "insurance-automation",
+      "name": "insurance-automation"
+    },
+    {
+      "createdAt": "2025-01-15T00:00:00.000Z",
+      "updatedAt": "2025-01-15T00:00:00.000Z",
+      "id": "appointments",
+      "name": "appointments"
+    }
+  ],
+  "triggerCount": 3,
+  "updatedAt": "2025-01-15T00:00:00.000Z",
+  "versionId": "1"
+}

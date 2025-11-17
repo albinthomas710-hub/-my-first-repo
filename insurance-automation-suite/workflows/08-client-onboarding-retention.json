@@ -1,0 +1,132 @@
+{
+  "name": "🎉 Client Onboarding & Retention Engine",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "client/new", "responseMode": "responseNode"},
+      "id": "webhook-new-client",
+      "name": "🎉 New Client (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "new-client"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "onboarding_sequences",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "client_id": "={{ $json.client_id }}",
+            "welcome_sent": false,
+            "documents_sent": false,
+            "check_in_1_sent": false,
+            "check_in_30_sent": false,
+            "renewal_reminder_sent": false
+          }
+        }
+      },
+      "id": "create-onboarding-sequence",
+      "name": "📋 Create Onboarding Sequence",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "content": "🎉 Welcome to the {{ $env.AGENCY_NAME }} family, {{ $json.first_name }}!\n\nI'm thrilled you chose us for your {{ $json.coverage_type }} coverage. Here's what happens next:\n\n✅ Your policy is ACTIVE as of {{ $json.policy_start_date }}\n✅ Policy number: {{ $json.policy_number }}\n✅ Your documents are attached\n\n📋 **Important Next Steps:**\n1. Review your policy documents (attached)\n2. Save my contact info: {{ $env.AGENT_PHONE }}\n3. Download your digital insurance card\n4. Add your beneficiaries (if needed)\n\n💡 **Quick Tips:**\n• Your premium: {{ $json.monthly_premium }}/month\n• Auto-pay is set up ✓\n• I'm here for ANY questions\n• Policy review in 1 year\n\nThank you for your trust! I'm here whenever you need me.\n\nBest regards,\n{{ $env.AGENT_NAME }}\n{{ $env.AGENT_PHONE }}\n{{ $env.AGENT_EMAIL }}",
+        "fromName": "={{ $env.AGENT_NAME }}",
+        "fromEmail": "={{ $env.AGENT_EMAIL }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "🎉 Welcome! Your {{ $json.coverage_type }} policy is ACTIVE"
+      },
+      "id": "send-welcome-email",
+      "name": "📧 Send Welcome Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [650, 240],
+      "credentials": {"smtp": {"id": "{{SMTP_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "🎉 Congrats {{ $json.first_name }}! Your {{ $json.coverage_type }} policy is ACTIVE! Policy #{{ $json.policy_number }}. Check your email for details. Questions? Call me anytime: {{ $env.AGENT_PHONE }} - {{ $env.AGENT_NAME }}"
+      },
+      "id": "send-welcome-sms",
+      "name": "💬 Send Welcome SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [650, 360],
+      "credentials": {"twilioApi": {"id": "{{TWILIO_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {"rule": {"interval": [{"field": "cronExpression", "expression": "0 10 * * *"}]}},
+      "id": "daily-check",
+      "name": "⏰ Daily Onboarding Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 700]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.*, o.*, \n  EXTRACT(DAY FROM (NOW() - c.policy_start_date)) as days_since_start,\n  (c.policy_renewal_date - NOW()) as days_until_renewal\nFROM clients c\nJOIN onboarding_sequences o ON c.id = o.client_id\nWHERE \n  (o.check_in_1_sent = false AND c.policy_start_date < NOW() - INTERVAL '7 days')\n  OR (o.check_in_30_sent = false AND c.policy_start_date < NOW() - INTERVAL '30 days')\n  OR (o.renewal_reminder_sent = false AND c.policy_renewal_date BETWEEN NOW() AND NOW() + INTERVAL '30 days')\nLIMIT 50;"
+      },
+      "id": "get-clients-for-touchpoint",
+      "name": "📊 Get Clients Needing Touchpoints",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 700],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\nlet touchpoint = null;\n\nif (!c.check_in_1_sent && c.days_since_start >= 7) {\n  touchpoint = {type: '7day', message: `Hi ${c.first_name}! Just checking in - how's your new coverage working out? Any questions? - ${process.env.AGENT_NAME}`};\n} else if (!c.check_in_30_sent && c.days_since_start >= 30) {\n  touchpoint = {type: '30day', message: `Hi ${c.first_name}! Your policy has been active for a month. Hope everything is great! Remember: I'm always here if you need anything. Also, know anyone who needs coverage? - ${process.env.AGENT_NAME}`};\n} else if (!c.renewal_reminder_sent && c.days_until_renewal <= 30) {\n  touchpoint = {type: 'renewal', message: `Hi ${c.first_name}! Your ${c.coverage_type} policy renews in ${Math.floor(c.days_until_renewal)} days. Let's review to make sure you still have the best coverage. Book a call: ${process.env.CALENDAR_BOOKING_LINK}`};\n}\n\nreturn {json: {...c, touchpoint}};"
+      },
+      "id": "determine-touchpoint",
+      "name": "🎯 Determine Touchpoint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 700]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "from": "={{ $env.TWILIO_PHONE }}",
+        "to": "={{ $json.phone }}",
+        "message": "={{ $json.touchpoint.message }}"
+      },
+      "id": "send-touchpoint-sms",
+      "name": "💬 Send Touchpoint SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1.1,
+      "position": [850, 700],
+      "credentials": {"twilioApi": {"id": "{{TWILIO_CREDENTIAL_ID}}"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE onboarding_sequences SET\n  {{ $json.touchpoint.type }}_sent = true,\n  updated_at = NOW()\nWHERE client_id = {{ $json.id }};"
+      },
+      "id": "mark-touchpoint-sent",
+      "name": "✅ Mark Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 700],
+      "credentials": {"postgres": {"id": "{{POSTGRES_CREDENTIAL_ID}}"}}
+    }
+  ],
+  "connections": {
+    "🎉 New Client (Webhook)": {"main": [[{"node": "📋 Create Onboarding Sequence", "type": "main", "index": 0}]]},
+    "📋 Create Onboarding Sequence": {"main": [[{"node": "📧 Send Welcome Email", "type": "main", "index": 0}, {"node": "💬 Send Welcome SMS", "type": "main", "index": 0}]]},
+    "⏰ Daily Onboarding Check": {"main": [[{"node": "📊 Get Clients Needing Touchpoints", "type": "main", "index": 0}]]},
+    "📊 Get Clients Needing Touchpoints": {"main": [[{"node": "🎯 Determine Touchpoint", "type": "main", "index": 0}]]},
+    "🎯 Determine Touchpoint": {"main": [[{"node": "💬 Send Touchpoint SMS", "type": "main", "index": 0}]]},
+    "💬 Send Touchpoint SMS": {"main": [[{"node": "✅ Mark Sent", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "tags": [{"id": "insurance-automation", "name": "insurance-automation"}]
+}
